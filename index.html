@@ -12,8 +12,8 @@
            renderer="antialias: true">
 
     <!-- Освещение -->
-    <a-light type="ambient" color="#aebbd0"
-             intensity="0.65"></a-light>
+    <a-light type="ambient" color="#d2bb9b"
+             intensity="0.8"></a-light>
     <a-light type="point" position="0 2.7 0"
              intensity="18" distance="9"
              decay="2" color="#ffe5bb"></a-light>
@@ -21,27 +21,27 @@
     <!-- Пол -->
     <a-box position="0 -0.1 0"
            width="5" height="0.2" depth="5"
-           color="#51453c"></a-box>
+           color="#302017"></a-box>
 
     <!-- Стены -->
     <a-box position="0 1.5 -2.5"
            width="5" height="3" depth="0.15"
-           color="#777b80"></a-box>
+           color="#27372f"></a-box>
     <a-box position="-2.5 1.5 0"
            width="0.15" height="3" depth="5"
-           color="#666b70"></a-box>
+           color="#24332b"></a-box>
     <a-box position="2.5 1.5 0"
            width="0.15" height="3" depth="5"
-           color="#666b70"></a-box>
+           color="#24332b"></a-box>
     <a-box position="0 1.5 2.5"
            width="5" height="3" depth="0.15"
-           color="#777b80"
+           color="#27372f"
            material="side: double"></a-box>
 
     <!-- Потолок -->
     <a-box position="0 3.05 0"
            width="5" height="0.1" depth="5"
-           color="#4c5057"
+           color="#c1b099"
            material="side: double"></a-box>
 
     <!-- Светильник -->
@@ -61,6 +61,8 @@
                   scale="1 1 1">
     </a-gltf-model>
 
+    <!-- Кабинет: тёмное дерево, латунь и книги -->
+    <a-entity id="office-furnishings"></a-entity>
     <!-- Игрок и VR-камера -->
     <a-entity id="player"
               position="0 0 1.2"
@@ -77,6 +79,58 @@
 
   </a-scene>
   <script>
+// Небольшие предметы кабинета строятся локально, без внешних загрузок.
+(function () {
+  const root = document.querySelector('#office-furnishings');
+  function box(parent, pos, size, color) {
+    const e = document.createElement('a-box');
+    e.setAttribute('position', pos); e.setAttribute('width', size[0]);
+    e.setAttribute('height', size[1]); e.setAttribute('depth', size[2]);
+    e.setAttribute('color', color); parent.appendChild(e); return e;
+  }
+  function entity(pos, rotation) { const e=document.createElement('a-entity'); e.setAttribute('position',pos); if(rotation)e.setAttribute('rotation',rotation); root.appendChild(e); return e; }
+  // Деревянные панели и декоративные молдинги вдоль стен.
+  for (const [x,z,rot] of [[0,-2.405,0],[0,2.405,180],[-2.405,0,90],[2.405,0,-90]]) {
+    const w=entity(`${x} 0 ${z}`,`0 ${rot} 0`);
+    box(w,'0 0.48 0',[4.8,.96,.07],'#392318');
+    for (const y of [.08,.88,1.02,2.86]) box(w,`0 ${y} .055`,[4.8,.045,.075],'#704a2a');
+    for (let n=-2;n<=2;n++) {box(w,`${n*.9} .48 .055`,[.045,.78,.08],'#78512d');}
+  }
+  // Письменный стол со столешницей и массивными тумбами.
+  const desk=entity('-1.25 0 -1.48','0 0 0');
+  box(desk,'0 .78 0',[1.7,.14,.83],'#4a2718');
+  box(desk,'0 .86 0',[1.76,.035,.88],'#9b7443');
+  box(desk,'0 .885 0',[1.60,.018,.72],'#254537');
+  for(const x of [-.64,.64]) {box(desk,`${x} .38 0`,[.38,.76,.73],'#4d2c1c'); for(const y of [.18,.41,.64]){box(desk,`${x} ${y} .375`,[.32,.17,.025],'#6b3d24'); box(desk,`${x} ${y} .397`,[.075,.025,.018],'#d7ad59');}}
+  // Книги на шкафах: корешки разных цветов, золотые полосы.
+  const colors=['#512829','#293e33','#493124','#3e3039','#2f3c49','#674a30'];
+  for (const [x,rot] of [[-2.20,90],[2.20,-90]]) {
+    const shelf=entity(`${x} 0 .35`,`0 ${rot} 0`);
+    box(shelf,'0 1.15 0',[1.85,2.3,.38],'#3b2117');
+    box(shelf,'0 2.34 0',[1.96,.12,.46],'#7c532f');
+    for(const y of [.25,.70,1.15,1.60,2.05]) {
+      box(shelf,`0 ${y} .02`,[1.8,.045,.42],'#79502c');
+      if(y===2.05)continue;
+      for(let i=0;i<14;i++){const h=.24+(i%4)*.028;const x1=-.78+i*.12; box(shelf,`${x1} ${y+.03+h/2} .12`,[.102,h,.19],colors[(i+Math.round(y*10))%colors.length]);box(shelf,`${x1} ${y+.12} .225`,[.085,.009,.006],'#bd9857');}
+    }
+  }
+  // Ковёр с каймой.
+  box(root,'0 .012 .15',[2.35,.018,2.2],'#692d2c');
+  box(root,'0 .023 .15',[2.13,.008,1.98],'#b18a50');
+  box(root,'0 .029 .15',[1.99,.006,1.84],'#702e30');
+  // Глобус в латунном меридиане на деревянной подставке.
+  const globe=entity('1.67 0 -1.65');
+  const cyl=(parent,pos,r1,r2,h,color)=>{let e=document.createElement('a-cylinder');e.setAttribute('position',pos);e.setAttribute('geometry', `primitive: cylinder; radiusTop: ${r1}; radiusBottom: ${r2}; height: ${h}`);e.setAttribute('color',color);parent.appendChild(e);};
+  cyl(globe,'0 .04 0',.24,.27,.08,'#42281a');cyl(globe,'0 .32 0',.04,.075,.52,'#98723c');cyl(globe,'0 .58 0',.19,.13,.05,'#ba9555');
+  let ball=document.createElement('a-sphere'); ball.setAttribute('position','0 .85 0');ball.setAttribute('radius','.27');ball.setAttribute('color','#a99366');globe.appendChild(ball);
+  let ring=document.createElement('a-torus');ring.setAttribute('position','0 .85 0');ring.setAttribute('radius','.30');ring.setAttribute('radius-tubular','.012');ring.setAttribute('rotation','0 20 22');ring.setAttribute('color','#caa95f');globe.appendChild(ring);
+  // Рамка, латунный светильник и бумаги на столе.
+  const art=entity('.8 0 -2.40');box(art,'0 1.9 .02',[1.05,.8,.075],'#a27b3d');box(art,'0 1.9 .07',[.91,.66,.025],'#302b25');box(art,'0 1.9 .09',[.80,.56,.01],'#786955');
+  box(desk,'-.2 .916 .04',[.38,.012,.27],'#d4c7a4');box(desk,'-.21 .926 .04',[.37,.008,.26],'#ede1c3');
+  cyl(desk,'.54 .93 -.20',.10,.12,.04,'#b29354');cyl(desk,'.54 1.12 -.20',.018,.018,.35,'#b29354');
+  const shade=document.createElement('a-cone');shade.setAttribute('position','.54 1.33 -.20');shade.setAttribute('radius-bottom','.17');shade.setAttribute('radius-top','.05');shade.setAttribute('height','.16');shade.setAttribute('color','#25533f');desk.appendChild(shade);
+})();
+
 AFRAME.registerComponent('thumbstick-movement', {
   init: function () {
     this.axisX = 0;
