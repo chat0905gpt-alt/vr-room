@@ -103,8 +103,9 @@ AFRAME.registerComponent('grid-floor', {
     tex.anisotropy = 8;
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(this.data.radius, 64),
-      new THREE.MeshBasicMaterial({map: tex}));
+      new THREE.MeshStandardMaterial({map: tex, roughness: 1, metalness: 0}));
     mesh.rotation.x = -Math.PI / 2;
+    mesh.receiveShadow = true;
     this.el.setObject3D('mesh', mesh);
   }
 });
@@ -120,8 +121,8 @@ AFRAME.registerComponent('glow-pool', {
     g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(this.data.radius, 32),
-      new THREE.MeshBasicMaterial({map: new THREE.CanvasTexture(c), color: this.data.color, transparent: true,
-        opacity: this.data.opacity, blending: THREE.AdditiveBlending, depthWrite: false}));
+      new THREE.MeshBasicMaterial({map: new THREE.CanvasTexture(c), color: '#000000', transparent: true,
+        opacity: this.data.opacity, blending: THREE.NormalBlending, depthWrite: false}));
     mesh.rotation.x = -Math.PI / 2;
     this.el.setObject3D('mesh', mesh);
   }
@@ -194,6 +195,29 @@ AFRAME.registerComponent('saturn', {
   }
 });
 
+// Огромный газовый шар над головой: освещается солнцем и отбрасывает тень на пол.
+AFRAME.registerComponent('overhead-planet', {
+  schema: { radius: {default: 8} },
+  init: function () {
+    const c = document.createElement('canvas'); c.width = 4; c.height = 512;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.00, '#d8b890'); grad.addColorStop(0.35, '#b08c66');
+    grad.addColorStop(0.65, '#7a5e48'); grad.addColorStop(1.00, '#4a3f3a');
+    g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
+    for (let i = 0; i < 16; i++) {
+      g.fillStyle = 'rgba(245,225,190,' + (0.05 + (i % 3) * 0.03) + ')';
+      g.fillRect(0, (i * 33) % 480, 4, 6 + (i % 5) * 4);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(this.data.radius, 64, 40),
+      new THREE.MeshStandardMaterial({map: tex, roughness: 0.85, metalness: 0}));
+    mesh.castShadow = true;
+    this.el.setObject3D('mesh', mesh);
+  }
+});
+
 // Редкие светящиеся частицы для ощущения глубины (сейчас не используются).
 AFRAME.registerComponent('dust', {
   schema: { count: {default: 220}, radius: {default: 22} },
@@ -221,27 +245,28 @@ AFRAME.registerComponent('limit-radius', {
 </script>
 </head>
 <body>
-  <a-scene background="color: #1c1d22"
+  <a-scene id="scene" background="color: #1c1d22"
            fog="type: linear; color: #3a3c42; near: 6; far: 32"
            renderer="antialias: true">
 
     <!-- Освещение: холодный общий свет, тёплый над креслом, голубая подсветка сзади -->
     <a-light type="ambient" color="#8fa0c5" intensity="1.0"></a-light>
-    <a-light type="directional" position="2 6 4" color="#ffffff" intensity="1.1"></a-light>
+    <a-light id="sun" type="directional" position="-6 34 -30" color="#fff4e6" intensity="1.2"></a-light>
     <a-light type="point" position="0 3 -1.5" color="#ffb070" intensity="9" distance="9" decay="2"></a-light>
     <a-light type="point" position="0 1.4 -6" color="#d9a77a" intensity="14" distance="14" decay="2"></a-light>
 
     <a-entity void-sky></a-entity>
     <a-entity grid-floor></a-entity>
     <a-entity gas-planet="radius: 8" position="0 3 -70"></a-entity>
-    <a-entity saturn="radius: 4" position="15 13 -48"></a-entity>
+    <a-entity saturn="radius: 4" position="15 6.5 -50"></a-entity>
+    <a-entity overhead-planet="radius: 8" position="0 19 -4"></a-entity>
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0 3.2" limit-radius="max: 14">
-      <a-camera look-controls wasd-controls="acceleration: 15" position="0 1.6 0"></a-camera>
+      <a-camera look-controls wasd-controls="acceleration: 15" position="0 1.6 0" fov="70"></a-camera>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
       <a-entity laser-controls="hand: right" id="right-hand"></a-entity>
     </a-entity>
@@ -267,7 +292,7 @@ AFRAME.registerComponent('limit-radius', {
     if (it.pool) {
       const pool = document.createElement('a-entity');
       pool.setAttribute('position', `${it.pos[0]} 0.01 ${it.pos[2]}`);
-      pool.setAttribute('glow-pool', `color: ${it.pool[0]}; radius: ${it.pool[1]}; opacity: 0.45`);
+      pool.setAttribute('glow-pool', `color: ${it.pool[0]}; radius: ${it.pool[1]*0.8}; opacity: 0.6`);
       root.appendChild(pool);
     }
   }
@@ -320,6 +345,33 @@ AFRAME.registerComponent('snap-turn', {
   }
 });
 document.querySelector('#player').setAttribute('snap-turn', '');
+</script>
+
+<script>
+(function () {
+  const scene = document.querySelector('#scene');
+  const enable = () => {
+    const r = scene.renderer; if (!r) return;
+    r.shadowMap.enabled = true;
+    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    const sun = document.querySelector('#sun').getObject3D('light');
+    if (sun) {
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(1024, 1024);
+      const cam = sun.shadow.camera;
+      cam.left = -22; cam.right = 22; cam.top = 22; cam.bottom = -22; cam.near = 5; cam.far = 90;
+      cam.updateProjectionMatrix();
+      sun.shadow.bias = -0.0008;
+    }
+    let tries = 0;
+    const mark = () => {
+      scene.object3D.traverse(o => { if (o.isMesh && o.parent && o.parent.type !== 'Scene') { o.castShadow = true; o.receiveShadow = true; } });
+      if (++tries < 30) setTimeout(mark, 1000);
+    };
+    mark();
+  };
+  if (scene.hasLoaded) enable(); else scene.addEventListener('loaded', enable);
+})();
 </script>
 </body>
 </html>
