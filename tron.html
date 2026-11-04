@@ -346,9 +346,9 @@ const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 6, START = { x: 0, y: 0, z: 3.2 }
 // Три планеты на орбитах вокруг невидимого центра SUN (солнце – это направленный свет).
 const SUN = new THREE.Vector3(0, 30, -75);
 const BODIES = [
-  { r: 28, color: '#6e5d52', orbit: 57, phase: 2.2, period: 150, reach: 12 },
-  { r: 12, color: '#8a6a4c', orbit: 85, phase: 0.6, period: 220, reach: 8 },
-  { r: 18, color: '#4f5a66', orbit: 110, phase: 4.0, period: 320, reach: 10 }
+  { r: 28, color: '#6e5d52', orbit: 57, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
+  { r: 12, color: '#8a6a4c', orbit: 85, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
+  { r: 18, color: '#4f5a66', orbit: 110, phase: 4.0, period: 320, spin: -0.35, g: 4.5 }
 ];
 function bodyPos(i, t) {
   const b = BODIES[i], a = b.phase + 2 * Math.PI * t / b.period;
@@ -358,13 +358,27 @@ AFRAME.registerComponent('orbit-body', {
   schema: { index: { type: 'int' } },
   init: function () {
     const b = BODIES[this.data.index];
+    // Полосы вдоль меридианов – чтобы вращение было видно
+    const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = b.color; g.fillRect(0, 0, 256, 128);
+    for (let x = 0; x < 256; x += 4) {
+      g.fillStyle = 'rgba(0,0,0,' + (((x * 37) % 11) / 40) + ')';
+      g.fillRect(x, 0, 2 + (x * 13) % 5, 128);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(b.r, 48, 32),
-      new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0, fog: false }));
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, fog: false }));
     mesh.castShadow = true;
     this.el.setObject3D('mesh', mesh);
+    this.spin = b.spin;
   },
-  tick: function (time) { this.el.object3D.position.copy(bodyPos(this.data.index, time / 1000)); }
+  tick: function (time) {
+    const t = time / 1000;
+    this.el.object3D.position.copy(bodyPos(this.data.index, t));
+    this.el.object3D.rotation.y = t * this.spin;
+  }
 });
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 AFRAME.registerComponent('jetpack-flight', {
@@ -397,41 +411,67 @@ AFRAME.registerComponent('jetpack-flight', {
     const p = this.el.object3D.position;
     const rig = this.el.object3D;
 
-    // 0. Если стоим на движущейся планете – едем вместе с ней
     const t = time / 1000;
-    if (this.carrier >= 0) p.add(bodyPos(this.carrier, t).sub(bodyPos(this.carrier, t - dt)));
 
-    // 1. Ближайшая планета в зоне притяжения задаёт гравитацию; иначе – общая (вниз)
-    let near = -1, nearH = Infinity;
-    for (let i = 0; i < BODIES.length; i++) {
-      const h = p.distanceTo(bodyPos(i, t)) - BODIES[i].r;
-      if (h < BODIES[i].reach && h < nearH) { near = i; nearH = h; }
-    }
-    this.nearPlanet = near >= 0;
-    const up = this.nearPlanet ? p.clone().sub(bodyPos(near, t)).normalize() : WORLD_UP.clone();
 
-    // 2. Управление как в кабине: правый стик – поворот носа, левый стик – тяга вбок и вперёд/назад,
-    //    правый курок – тяга по носу, левый курок – тяга вверх по корпусу. На ПК нос – это взгляд, тяга – пробел.
+    // 2. Управление как в Outer Wilds:
+    //    правый курок – тяга вверх, левый курок – тяга вниз (аналоговые, дозированный газ);
+    //    левый стик – вперёд/назад и шаг вбок; правый стик влево-вправо – поворот носа (рыскание),
+    //    вперёд-назад – наклон носа; удержание левого захвата – режим крена (стик влево-вправо крутит корпус).
+    //    На ПК нос – это взгляд, тяга вперёд – пробел.
     const vr = this.el.sceneEl.is('vr-mode');
     const dz = v => (Math.abs(v) > 0.15 ? v : 0);
+    let tr = this.lift ? 0 : 0;
+    tr = this.thrusting ? 1 : 0;
+    let tl = this.lift ? 1 : 0, roll = false;
+    if (vr && navigator.getGamepads) {
+      for (const gp of navigator.getGamepads()) {
+        if (!gp) continue;
+        if (gp.hand === 'right' && gp.buttons[0]) tr = gp.buttons[0].value;
+        if (gp.hand === 'left') {
+          if (gp.buttons[0]) tl = gp.buttons[0].value;
+          if (gp.buttons[1]) roll = gp.buttons[1].pressed;
+        }
+      }
+    }
     if (vr) {
-      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dz(this.rx) * 2.2 * dt));
-      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -dz(this.ry) * 2.2 * dt));
+      const k = 2.2 * dt;
+      const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -dz(this.rx) * k);
+      const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dz(this.rx) * k);
+      const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -dz(this.ry) * k);
+      this.nose.multiply(roll ? qz : qy);
+      this.nose.multiply(qx);
     }
     const aim = vr ? this.nose : (() => { const q = new THREE.Quaternion(); this.el.querySelector('[camera]').object3D.getWorldQuaternion(q); return q; })();
     const fwdV = new THREE.Vector3(0, 0, -1).applyQuaternion(aim);
     const rightV = new THREE.Vector3(1, 0, 0).applyQuaternion(aim);
     const upV = new THREE.Vector3(0, 1, 0).applyQuaternion(aim);
     const TH = THRUST * dt;
-    if (this.thrusting) { this.vel.addScaledVector(fwdV, TH); this.grounded = false; }
-    if (this.lift) { this.vel.addScaledVector(upV, TH); this.grounded = false; }
-    if (vr && !this.grounded && (dz(this.lx) || dz(this.ly))) {
-      this.vel.addScaledVector(rightV, dz(this.lx) * TH);
-      this.vel.addScaledVector(fwdV, -dz(this.ly) * TH);
+    if (!vr && this.thrusting) { this.vel.addScaledVector(fwdV, TH); this.grounded = false; }
+    if (vr) {
+      if (tr > 0.05) { this.vel.addScaledVector(upV, tr * TH); this.grounded = false; }
+      if (tl > 0.05) { this.vel.addScaledVector(upV, -tl * TH); this.grounded = false; }
+      if (!this.grounded && (dz(this.lx) || dz(this.ly))) {
+        this.vel.addScaledVector(rightV, dz(this.lx) * TH);
+        this.vel.addScaledVector(fwdV, -dz(this.ly) * TH);
+      }
     }
 
-    // 3. Гравитация и движение
-    this.vel.addScaledVector(up, -GRAVITY * dt);
+    // 3. Гравитация: сумма притяжений всех планет по закону обратных квадратов, плавно гаснущих к 60 м;
+    //    общая гравитация комнаты тоже плавно гаснет к 25 м над полом
+    const acc = new THREE.Vector3();
+    this.nearPlanet = false;
+    for (let i = 0; i < BODIES.length; i++) {
+      const dir = bodyPos(i, t).sub(p);
+      const dd = dir.length();
+      const h = Math.max(dd - BODIES[i].r, 0.01);
+      const fall = Math.pow(BODIES[i].r / (BODIES[i].r + h), 2);
+      const fade = Math.pow(Math.max(0, 1 - h / 60), 2);
+      acc.addScaledVector(dir, BODIES[i].g * fall * fade / dd);
+      if (h < 30) this.nearPlanet = true;
+    }
+    acc.y -= GRAVITY * Math.max(0, 1 - p.y / 25);
+    this.vel.addScaledVector(acc, dt);
     p.addScaledVector(this.vel, dt);
 
     // 4. Касание поверхности шара или пола
@@ -454,11 +494,23 @@ AFRAME.registerComponent('jetpack-flight', {
     }
     this.grounded = touched;
     if (touched) {
-      const vn = this.vel.dot(n);
-      if (vn < 0) {
-        if (-vn > CRASH_SPEED) { this.crash(); return; }
-        this.vel.addScaledVector(n, -vn);
+      // На полу трение: горизонтальную скорость гасим, чтобы не скользить
+      if (this.carrier < 0) { this.vel.x = 0; this.vel.z = 0; }
+      // Скорость относительно поверхности: планета движется по орбите, поэтому сравниваем с её скоростью
+      // Скорость точки поверхности = орбитальная скорость + вращение вокруг своей оси
+      let vB = new THREE.Vector3();
+      if (this.carrier >= 0) {
+        vB = bodyPos(this.carrier, t).sub(bodyPos(this.carrier, t - dt)).multiplyScalar(1 / dt);
+        const rr = p.clone().sub(bodyPos(this.carrier, t));
+        vB.add(new THREE.Vector3(0, BODIES[this.carrier].spin, 0).cross(rr));
       }
+      const rel = this.vel.clone().sub(vB);
+      const rn = rel.dot(n);
+      if (rn < 0) {
+        if (-rn > CRASH_SPEED) { this.crash(); return; }
+        rel.addScaledVector(n, -rn);
+      }
+      this.vel.copy(vB).add(rel);
     }
 
     // 5. Корпус корабля = нос. Голова смотрит внутри кабины. Автоматического выравнивания нет.
