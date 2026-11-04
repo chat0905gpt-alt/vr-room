@@ -16,7 +16,7 @@
 //   inst  – true: один файл загружается один раз и копируется (экономит память Quest)
 //   pool  – световое пятно на полу [цвет, радиус]
 // ---------------------------------------------------------------
-const WARM = '#ffb070', CYAN = '#19d3ff';
+const WARM = '#ffb070', CYAN = '#d9a77a';
 const GALLERY = [
   // Кресло в центре: главный ориентир, к нему лицом стоит игрок.
   {id:'armchair', src:'polyhaven-armchair-01.glb', pos:[0, 0.0004315, -1.5], pool:[WARM, 1.5]},
@@ -111,7 +111,7 @@ AFRAME.registerComponent('grid-floor', {
 
 // Световое пятно на полу под предметом.
 AFRAME.registerComponent('glow-pool', {
-  schema: { color: {default: '#19d3ff'}, radius: {default: 1.5}, opacity: {default: 0.5} },
+  schema: { color: {default: '#d9a77a'}, radius: {default: 1.5}, opacity: {default: 0.5} },
   init: function () {
     const c = document.createElement('canvas'); c.width = c.height = 128;
     const g = c.getContext('2d');
@@ -144,7 +144,57 @@ AFRAME.registerComponent('void-sky', {
   }
 });
 
-// Редкие светящиеся частицы для ощущения глубины.
+// Газовый гигант в дымке: виден над дальней частью пустоты, нижняя часть уходит под пол.
+AFRAME.registerComponent('gas-planet', {
+  schema: { radius: {default: 10} },
+  init: function () {
+    const c = document.createElement('canvas'); c.width = 4; c.height = 512;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.00, '#7d604c'); grad.addColorStop(0.45, '#63493b');
+    grad.addColorStop(0.75, '#4a3c36'); grad.addColorStop(1.00, '#3a3c42');
+    g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
+    for (let i = 0; i < 14; i++) {
+      g.fillStyle = 'rgba(200,160,125,' + (0.04 + (i % 3) * 0.02) + ')';
+      g.fillRect(0, (i * 37) % 440, 4, 6 + (i % 4) * 4);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(this.data.radius, 48, 32),
+      new THREE.MeshBasicMaterial({map: tex, fog: false}));
+    this.el.setObject3D('mesh', mesh);
+  }
+});
+
+// Сатурн с кольцом: висит высоко над пустотой, нижняя часть плавно уходит в дымку.
+AFRAME.registerComponent('saturn', {
+  schema: { radius: {default: 4} },
+  init: function () {
+    const R = this.data.radius;
+    const group = new THREE.Group();
+    const c = document.createElement('canvas'); c.width = 4; c.height = 512;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.00, '#c2a57e'); grad.addColorStop(0.50, '#a08266');
+    grad.addColorStop(0.80, '#6f5e4c'); grad.addColorStop(1.00, '#3a3c42');
+    g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
+    for (let i = 0; i < 12; i++) {
+      g.fillStyle = 'rgba(240,220,180,' + (0.05 + (i % 3) * 0.03) + ')';
+      g.fillRect(0, (i * 41) % 440, 4, 5 + (i % 4) * 3);
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    group.add(new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32),
+      new THREE.MeshBasicMaterial({map: tex, fog: false})));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(R * 1.35, R * 2.1, 128, 1),
+      new THREE.MeshBasicMaterial({color: '#cdb48f', transparent: true, opacity: 0.38,
+        side: THREE.DoubleSide, fog: false, depthWrite: false}));
+    ring.rotation.x = -1.05;
+    group.add(ring);
+    this.el.setObject3D('mesh', group);
+  }
+});
+
+// Редкие светящиеся частицы для ощущения глубины (сейчас не используются).
 AFRAME.registerComponent('dust', {
   schema: { count: {default: 220}, radius: {default: 22} },
   init: function () {
@@ -172,18 +222,19 @@ AFRAME.registerComponent('limit-radius', {
 </head>
 <body>
   <a-scene background="color: #1c1d22"
-           fog="type: linear; color: #3a3c42; near: 7; far: 42"
+           fog="type: linear; color: #3a3c42; near: 6; far: 32"
            renderer="antialias: true">
 
     <!-- Освещение: холодный общий свет, тёплый над креслом, голубая подсветка сзади -->
     <a-light type="ambient" color="#8fa0c5" intensity="1.0"></a-light>
     <a-light type="directional" position="2 6 4" color="#ffffff" intensity="1.1"></a-light>
     <a-light type="point" position="0 3 -1.5" color="#ffb070" intensity="9" distance="9" decay="2"></a-light>
-    <a-light type="point" position="0 1.4 -6" color="#19d3ff" intensity="14" distance="14" decay="2"></a-light>
+    <a-light type="point" position="0 1.4 -6" color="#d9a77a" intensity="14" distance="14" decay="2"></a-light>
 
     <a-entity void-sky></a-entity>
     <a-entity grid-floor></a-entity>
-    <a-entity dust></a-entity>
+    <a-entity gas-planet="radius: 8" position="0 3 -70"></a-entity>
+    <a-entity saturn="radius: 4" position="15 13 -48"></a-entity>
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
