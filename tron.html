@@ -37,6 +37,12 @@ const GALLERY = [
   {id:'cab-r1', src:'victorian-cabinet-quest.glb', inst:true, pos:[ 4.8, 0, -3.8], rot:-90, scale:[1,1,.55], pool:[CYAN, 1.6]},
   {id:'cab-r2', src:'victorian-cabinet-quest.glb', inst:true, pos:[ 4.8, 0, -7.0], rot:-90, scale:[1,1,.55], pool:[CYAN, 1.6]},
   {id:'cab-c',  src:'victorian-cabinet-quest.glb', inst:true, pos:[ 0, 0, -10.5], rot:0,    scale:[1,1,.55], pool:[CYAN, 1.8]},
+
+  // Новый шкаф (сгенерирован заново, глубина сжата примерно до 0,58 м).
+  {id:'cab-new', src:'victorian-cabinet2-quest.glb', pos:[-2.4, 0, -7.6], rot:0, scale:[1,1,.25], pool:[WARM, 1.5]},
+
+  // Напольные часы (сгенерированы по фото; стекло и циферблат перерисованы, глубина сжата до 0,4 м).
+  {id:'clock', src:'grandfather-clock-quest.glb', pos:[2.4, 0, -7.6], rot:0, scale:[1,1,.6], pool:[WARM, 1.2]},
 ];
 
 AFRAME.registerComponent('fit-furniture', {
@@ -81,14 +87,14 @@ AFRAME.registerComponent('grid-floor', {
     const size = 512, cells = 5, c = document.createElement('canvas');
     c.width = c.height = size;
     const g = c.getContext('2d');
-    g.fillStyle = '#03060b'; g.fillRect(0, 0, size, size);
+    g.fillStyle = '#4a4c52'; g.fillRect(0, 0, size, size);
     const step = size / cells;
-    g.strokeStyle = 'rgba(25,211,255,0.22)'; g.lineWidth = 2;
+    g.strokeStyle = 'rgba(212,160,120,0.45)'; g.lineWidth = 2;
     for (let i = 1; i < cells; i++) {
       g.beginPath(); g.moveTo(i*step, 0); g.lineTo(i*step, size); g.stroke();
       g.beginPath(); g.moveTo(0, i*step); g.lineTo(size, i*step); g.stroke();
     }
-    g.strokeStyle = 'rgba(40,225,255,0.85)'; g.lineWidth = 5;
+    g.strokeStyle = 'rgba(222,168,128,0.7)'; g.lineWidth = 5;
     g.strokeRect(0, 0, size, size);
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -127,8 +133,8 @@ AFRAME.registerComponent('void-sky', {
     const c = document.createElement('canvas'); c.width = 8; c.height = 256;
     const g = c.getContext('2d');
     const grad = g.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0.00, '#010208'); grad.addColorStop(0.45, '#03060e');
-    grad.addColorStop(0.50, '#0a1c28'); grad.addColorStop(0.56, '#03060e'); grad.addColorStop(1.00, '#02030a');
+    grad.addColorStop(0.00, '#17181c'); grad.addColorStop(0.45, '#2a2b30');
+    grad.addColorStop(0.50, '#4a4c52'); grad.addColorStop(0.56, '#2a2b30'); grad.addColorStop(1.00, '#1c1d22');
     g.fillStyle = grad; g.fillRect(0, 0, 8, 256);
     const skyTex = new THREE.CanvasTexture(c); skyTex.colorSpace = THREE.SRGBColorSpace;
     const mesh = new THREE.Mesh(
@@ -165,8 +171,8 @@ AFRAME.registerComponent('limit-radius', {
 </script>
 </head>
 <body>
-  <a-scene background="color: #02040a"
-           fog="type: linear; color: #06101a; near: 7; far: 42"
+  <a-scene background="color: #1c1d22"
+           fog="type: linear; color: #3a3c42; near: 7; far: 42"
            renderer="antialias: true">
 
     <!-- Освещение: холодный общий свет, тёплый над креслом, голубая подсветка сзади -->
