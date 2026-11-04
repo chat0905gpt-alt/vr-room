@@ -199,20 +199,10 @@ AFRAME.registerComponent('saturn', {
 AFRAME.registerComponent('overhead-planet', {
   schema: { radius: {default: 8} },
   init: function () {
-    const c = document.createElement('canvas'); c.width = 4; c.height = 512;
-    const g = c.getContext('2d');
-    const grad = g.createLinearGradient(0, 0, 0, 512);
-    grad.addColorStop(0.00, '#d8b890'); grad.addColorStop(0.35, '#b08c66');
-    grad.addColorStop(0.65, '#7a5e48'); grad.addColorStop(1.00, '#4a3f3a');
-    g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
-    for (let i = 0; i < 16; i++) {
-      g.fillStyle = 'rgba(245,225,190,' + (0.05 + (i % 3) * 0.03) + ')';
-      g.fillRect(0, (i * 33) % 480, 4, 6 + (i % 5) * 4);
-    }
-    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    // Матовый однотонный шар, без полос.
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(this.data.radius, 64, 40),
-      new THREE.MeshStandardMaterial({map: tex, roughness: 0.85, metalness: 0}));
+      new THREE.SphereGeometry(this.data.radius, 48, 32),
+      new THREE.MeshStandardMaterial({color: '#6e5d52', roughness: 1, metalness: 0}));
     mesh.castShadow = true;
     this.el.setObject3D('mesh', mesh);
   }
@@ -259,7 +249,7 @@ AFRAME.registerComponent('limit-radius', {
     <a-entity grid-floor></a-entity>
     <a-entity gas-planet="radius: 8" position="0 3 -70"></a-entity>
     <a-entity saturn="radius: 4" position="15 6.5 -50"></a-entity>
-    <a-entity overhead-planet="radius: 8" position="0 19 -4"></a-entity>
+    <a-entity overhead-planet="radius: 28" position="-34 32 -30"></a-entity>
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
@@ -359,16 +349,11 @@ document.querySelector('#player').setAttribute('snap-turn', '');
       sun.castShadow = true;
       sun.shadow.mapSize.set(1024, 1024);
       const cam = sun.shadow.camera;
-      cam.left = -22; cam.right = 22; cam.top = 22; cam.bottom = -22; cam.near = 5; cam.far = 90;
+      cam.left = -45; cam.right = 45; cam.top = 45; cam.bottom = -45; cam.near = 5; cam.far = 120;
       cam.updateProjectionMatrix();
       sun.shadow.bias = -0.0008;
     }
-    let tries = 0;
-    const mark = () => {
-      scene.object3D.traverse(o => { if (o.isMesh && o.parent && o.parent.type !== 'Scene') { o.castShadow = true; o.receiveShadow = true; } });
-      if (++tries < 30) setTimeout(mark, 1000);
-    };
-    mark();
+    // Тень отбрасывают только шар; пол её принимает. Мебель не отбрасывает тени, чтобы не грузить Квест.
   };
   if (scene.hasLoaded) enable(); else scene.addEventListener('loaded', enable);
 })();
