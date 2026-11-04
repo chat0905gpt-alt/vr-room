@@ -247,9 +247,9 @@ AFRAME.registerComponent('limit-radius', {
 
     <a-entity void-sky></a-entity>
     <a-entity grid-floor></a-entity>
-    <a-entity gas-planet="radius: 8" position="0 3 -70"></a-entity>
-    <a-entity saturn="radius: 4" position="15 6.5 -50"></a-entity>
-    <a-entity overhead-planet="radius: 28" position="-34 32 -30"></a-entity>
+    <a-entity orbit-body="index: 0"></a-entity>
+    <a-entity orbit-body="index: 1"></a-entity>
+    <a-entity orbit-body="index: 2"></a-entity>
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
@@ -343,8 +343,30 @@ document.querySelector('#player').setAttribute('snap-turn', '');
 
 // Ранец: гравитация, инерция, тяга по взгляду (как посадочный модуль).
 // Тяга: триггер правой руки (на ПК – пробел). Посадка мягкая до 6 м/с, быстрее – разбивается и возвращает на старт.
-const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 6, START = { x: 0, y: 0, z: 3.2 };
-const PLANET = { c: new THREE.Vector3(-34, 32, -30), r: 28, reach: 12 };
+const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 14, START = { x: 0, y: 0, z: 3.2 };
+// Три планеты на орбитах вокруг невидимого центра SUN (солнце – это направленный свет).
+const SUN = new THREE.Vector3(0, 30, -75);
+const BODIES = [
+  { r: 28, color: '#6e5d52', orbit: 57, phase: 2.2, period: 150, reach: 12 },
+  { r: 12, color: '#8a6a4c', orbit: 85, phase: 0.6, period: 220, reach: 8 },
+  { r: 18, color: '#4f5a66', orbit: 110, phase: 4.0, period: 320, reach: 10 }
+];
+function bodyPos(i, t) {
+  const b = BODIES[i], a = b.phase + 2 * Math.PI * t / b.period;
+  return new THREE.Vector3(SUN.x + b.orbit * Math.cos(a), SUN.y, SUN.z + b.orbit * Math.sin(a));
+}
+AFRAME.registerComponent('orbit-body', {
+  schema: { index: { type: 'int' } },
+  init: function () {
+    const b = BODIES[this.data.index];
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(b.r, 48, 32),
+      new THREE.MeshStandardMaterial({ color: b.color, roughness: 1, metalness: 0, fog: false }));
+    mesh.castShadow = true;
+    this.el.setObject3D('mesh', mesh);
+  },
+  tick: function (time) { this.el.object3D.position.copy(bodyPos(this.data.index, time / 1000)); }
+});
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 AFRAME.registerComponent('jetpack-flight', {
   init: function () {
@@ -353,6 +375,7 @@ AFRAME.registerComponent('jetpack-flight', {
     this.thrusting = false;
     this.grounded = true;
     this.nearPlanet = false;
+    this.carrier = -1;
     this.crashing = false;
     this.plane = document.querySelector('#crash-plane');
     const hand = document.querySelector('#right-hand');
@@ -367,11 +390,18 @@ AFRAME.registerComponent('jetpack-flight', {
     const p = this.el.object3D.position;
     const rig = this.el.object3D;
 
-    // 1. Чья гравитация: рядом с шаром – его, иначе общая (вниз)
-    const toC = new THREE.Vector3().subVectors(p, PLANET.c);
-    const dist = toC.length();
-    this.nearPlanet = (dist - PLANET.r) < PLANET.reach;
-    const up = (this.nearPlanet && dist > 0.001) ? toC.clone().multiplyScalar(1 / dist) : WORLD_UP.clone();
+    // 0. Если стоим на движущейся планете – едем вместе с ней
+    const t = time / 1000;
+    if (this.carrier >= 0) p.add(bodyPos(this.carrier, t).sub(bodyPos(this.carrier, t - dt)));
+
+    // 1. Ближайшая планета в зоне притяжения задаёт гравитацию; иначе – общая (вниз)
+    let near = -1, nearH = Infinity;
+    for (let i = 0; i < BODIES.length; i++) {
+      const h = p.distanceTo(bodyPos(i, t)) - BODIES[i].r;
+      if (h < BODIES[i].reach && h < nearH) { near = i; nearH = h; }
+    }
+    this.nearPlanet = near >= 0;
+    const up = this.nearPlanet ? p.clone().sub(bodyPos(near, t)).normalize() : WORLD_UP.clone();
 
     // 2. Тяга по направлению правой руки (на ПК – по взгляду)
     if (this.thrusting) {
@@ -389,12 +419,18 @@ AFRAME.registerComponent('jetpack-flight', {
 
     // 4. Касание поверхности шара или пола
     let n = null, touched = false;
-    const d = p.distanceTo(PLANET.c);
-    if (d <= PLANET.r) {
-      n = new THREE.Vector3().subVectors(p, PLANET.c).multiplyScalar(1 / d);
-      p.copy(PLANET.c).addScaledVector(n, PLANET.r);
-      touched = true;
-    } else if (!this.nearPlanet && p.y <= 0) {
+    this.carrier = -1;
+    for (let i = 0; i < BODIES.length; i++) {
+      const c = bodyPos(i, t);
+      const dd = p.distanceTo(c);
+      if (dd <= BODIES[i].r) {
+        n = p.clone().sub(c).multiplyScalar(1 / dd);
+        p.copy(c).addScaledVector(n, BODIES[i].r);
+        touched = true; this.carrier = i;
+        break;
+      }
+    }
+    if (!touched && !this.nearPlanet && p.y <= 0) {
       n = WORLD_UP.clone();
       p.y = 0;
       touched = true;
@@ -422,6 +458,7 @@ AFRAME.registerComponent('jetpack-flight', {
     setTimeout(() => {
       this.el.object3D.position.set(START.x, START.y, START.z);
       this.grounded = true;
+      this.carrier = -1;
       this.plane.setAttribute('material', 'opacity', 0);
       this.crashing = false;
     }, 700);
