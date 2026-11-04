@@ -339,11 +339,10 @@ AFRAME.registerComponent('snap-turn', {
     });
   }
 });
-document.querySelector('#player').setAttribute('snap-turn', '');
 
 // Ранец: гравитация, инерция, тяга по взгляду (как посадочный модуль).
 // Тяга: триггер правой руки (на ПК – пробел). Посадка мягкая до 6 м/с, быстрее – разбивается и возвращает на старт.
-const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 14, START = { x: 0, y: 0, z: 3.2 };
+const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 6, START = { x: 0, y: 0, z: 3.2 };
 // Три планеты на орбитах вокруг невидимого центра SUN (солнце – это направленный свет).
 const SUN = new THREE.Vector3(0, 30, -75);
 const BODIES = [
@@ -378,9 +377,17 @@ AFRAME.registerComponent('jetpack-flight', {
     this.carrier = -1;
     this.crashing = false;
     this.plane = document.querySelector('#crash-plane');
+    this.nose = new THREE.Quaternion();
+    this.lift = false;
+    this.lx = 0; this.ly = 0; this.rx = 0; this.ry = 0;
     const hand = document.querySelector('#right-hand');
+    const left = document.querySelector('#left-hand');
     hand.addEventListener('triggerdown', () => { this.thrusting = true; });
     hand.addEventListener('triggerup', () => { this.thrusting = false; });
+    hand.addEventListener('thumbstickmoved', e => { this.rx = e.detail.x; this.ry = e.detail.y; });
+    left.addEventListener('triggerdown', () => { this.lift = true; });
+    left.addEventListener('triggerup', () => { this.lift = false; });
+    left.addEventListener('thumbstickmoved', e => { this.lx = e.detail.x; this.ly = e.detail.y; });
     window.addEventListener('keydown', e => { if (e.code === 'Space') this.thrusting = true; });
     window.addEventListener('keyup', e => { if (e.code === 'Space') this.thrusting = false; });
   },
@@ -403,14 +410,24 @@ AFRAME.registerComponent('jetpack-flight', {
     this.nearPlanet = near >= 0;
     const up = this.nearPlanet ? p.clone().sub(bodyPos(near, t)).normalize() : WORLD_UP.clone();
 
-    // 2. Тяга по направлению правой руки (на ПК – по взгляду)
-    if (this.thrusting) {
-      const src = this.el.sceneEl.is('vr-mode') ? document.querySelector('#right-hand').object3D
-                                                : this.el.querySelector('[camera]').object3D;
-      const q = new THREE.Quaternion();
-      src.getWorldQuaternion(q);
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-      this.vel.addScaledVector(fwd, THRUST * dt);
+    // 2. Управление как в кабине: правый стик – поворот носа, левый стик – тяга вбок и вперёд/назад,
+    //    правый курок – тяга по носу, левый курок – тяга вверх по корпусу. На ПК нос – это взгляд, тяга – пробел.
+    const vr = this.el.sceneEl.is('vr-mode');
+    const dz = v => (Math.abs(v) > 0.15 ? v : 0);
+    if (vr) {
+      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dz(this.rx) * 2.2 * dt));
+      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -dz(this.ry) * 2.2 * dt));
+    }
+    const aim = vr ? this.nose : (() => { const q = new THREE.Quaternion(); this.el.querySelector('[camera]').object3D.getWorldQuaternion(q); return q; })();
+    const fwdV = new THREE.Vector3(0, 0, -1).applyQuaternion(aim);
+    const rightV = new THREE.Vector3(1, 0, 0).applyQuaternion(aim);
+    const upV = new THREE.Vector3(0, 1, 0).applyQuaternion(aim);
+    const TH = THRUST * dt;
+    if (this.thrusting) { this.vel.addScaledVector(fwdV, TH); this.grounded = false; }
+    if (this.lift) { this.vel.addScaledVector(upV, TH); this.grounded = false; }
+    if (vr && !this.grounded && (dz(this.lx) || dz(this.ly))) {
+      this.vel.addScaledVector(rightV, dz(this.lx) * TH);
+      this.vel.addScaledVector(fwdV, -dz(this.ly) * TH);
     }
 
     // 3. Гравитация и движение
@@ -444,11 +461,8 @@ AFRAME.registerComponent('jetpack-flight', {
       }
     }
 
-    // 5. Поворот тела: «верх» – по гравитации, плюс поворот рукой/стиком
-    const alignQ = new THREE.Quaternion().setFromUnitVectors(WORLD_UP, up);
-    const yawQ = new THREE.Quaternion().setFromAxisAngle(WORLD_UP, this.yaw);
-    const target = new THREE.Quaternion().multiplyQuaternions(alignQ, yawQ);
-    rig.quaternion.slerp(target, Math.min(1, dt * 5));
+    // 5. Корпус корабля = нос. Голова смотрит внутри кабины. Автоматического выравнивания нет.
+    rig.quaternion.copy(this.nose);
   },
   crash: function () {
     this.crashing = true;
