@@ -255,7 +255,7 @@ AFRAME.registerComponent('limit-radius', {
     <a-entity id="gallery"></a-entity>
 
     <!-- Игрок и VR-камера -->
-    <a-entity id="player" position="0 0 3.2" limit-radius="max: 14">
+    <a-entity id="player" position="0 0 3.2">
       <a-camera look-controls wasd-controls="acceleration: 15" position="0 1.6 0" fov="70">
         <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
       </a-camera>
@@ -309,7 +309,7 @@ AFRAME.registerComponent('thumbstick-movement', {
     if (x === 0 && y === 0) return;
     // В полёте ходьба отключена: управляет только ранец.
     const jet = document.querySelector('#player').components['jetpack-flight'];
-    if (jet && !jet.grounded) return;
+    if (jet && (!jet.grounded || jet.nearPlanet)) return;
     const player = document.querySelector('#player');
     const camera = player.querySelector('[camera]');
     const direction = new THREE.Vector3(x, 0, y);
@@ -335,7 +335,7 @@ AFRAME.registerComponent('snap-turn', {
       if (!this.ready || Math.abs(x) < 0.75) return;
       this.ready = false;
       const angle = x > 0 ? -Math.PI / 6 : Math.PI / 6;
-      this.el.object3D.rotation.y += angle;
+      const jet = this.el.components['jetpack-flight']; if (jet) jet.yaw += angle;
     });
   }
 });
@@ -344,11 +344,15 @@ document.querySelector('#player').setAttribute('snap-turn', '');
 // Ранец: гравитация, инерция, тяга по взгляду (как посадочный модуль).
 // Тяга: триггер правой руки (на ПК – пробел). Посадка мягкая до 6 м/с, быстрее – разбивается и возвращает на старт.
 const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 6, START = { x: 0, y: 0, z: 3.2 };
+const PLANET = { c: new THREE.Vector3(-34, 32, -30), r: 28, reach: 12 };
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 AFRAME.registerComponent('jetpack-flight', {
   init: function () {
     this.vel = new THREE.Vector3();
+    this.yaw = 0;
     this.thrusting = false;
     this.grounded = true;
+    this.nearPlanet = false;
     this.crashing = false;
     this.plane = document.querySelector('#crash-plane');
     const hand = document.querySelector('#right-hand');
@@ -361,20 +365,54 @@ AFRAME.registerComponent('jetpack-flight', {
     if (this.crashing) return;
     const dt = Math.min(delta / 1000, 0.05);
     const p = this.el.object3D.position;
+    const rig = this.el.object3D;
+
+    // 1. Чья гравитация: рядом с шаром – его, иначе общая (вниз)
+    const toC = new THREE.Vector3().subVectors(p, PLANET.c);
+    const dist = toC.length();
+    this.nearPlanet = (dist - PLANET.r) < PLANET.reach;
+    const up = (this.nearPlanet && dist > 0.001) ? toC.clone().multiplyScalar(1 / dist) : WORLD_UP.clone();
+
+    // 2. Тяга по направлению правой руки (на ПК – по взгляду)
     if (this.thrusting) {
+      const src = this.el.sceneEl.is('vr-mode') ? document.querySelector('#right-hand').object3D
+                                                : this.el.querySelector('[camera]').object3D;
       const q = new THREE.Quaternion();
-      this.el.querySelector('[camera]').object3D.getWorldQuaternion(q);
+      src.getWorldQuaternion(q);
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
       this.vel.addScaledVector(fwd, THRUST * dt);
-      this.grounded = false;
     }
-    if (this.grounded) { this.vel.set(0, 0, 0); return; }
-    this.vel.y -= GRAVITY * dt;
+
+    // 3. Гравитация и движение
+    this.vel.addScaledVector(up, -GRAVITY * dt);
     p.addScaledVector(this.vel, dt);
-    if (p.y <= 0 && this.vel.y <= 0) {
-      if (-this.vel.y > CRASH_SPEED) { this.crash(); return; }
-      p.y = 0; this.vel.set(0, 0, 0); this.grounded = true;
+
+    // 4. Касание поверхности шара или пола
+    let n = null, touched = false;
+    const d = p.distanceTo(PLANET.c);
+    if (d <= PLANET.r) {
+      n = new THREE.Vector3().subVectors(p, PLANET.c).multiplyScalar(1 / d);
+      p.copy(PLANET.c).addScaledVector(n, PLANET.r);
+      touched = true;
+    } else if (!this.nearPlanet && p.y <= 0) {
+      n = WORLD_UP.clone();
+      p.y = 0;
+      touched = true;
     }
+    this.grounded = touched;
+    if (touched) {
+      const vn = this.vel.dot(n);
+      if (vn < 0) {
+        if (-vn > CRASH_SPEED) { this.crash(); return; }
+        this.vel.addScaledVector(n, -vn);
+      }
+    }
+
+    // 5. Поворот тела: «верх» – по гравитации, плюс поворот рукой/стиком
+    const alignQ = new THREE.Quaternion().setFromUnitVectors(WORLD_UP, up);
+    const yawQ = new THREE.Quaternion().setFromAxisAngle(WORLD_UP, this.yaw);
+    const target = new THREE.Quaternion().multiplyQuaternions(alignQ, yawQ);
+    rig.quaternion.slerp(target, Math.min(1, dt * 5));
   },
   crash: function () {
     this.crashing = true;
