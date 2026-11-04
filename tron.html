@@ -392,6 +392,7 @@ AFRAME.registerComponent('jetpack-flight', {
     this.crashing = false;
     this.plane = document.querySelector('#crash-plane');
     this.nose = new THREE.Quaternion();
+    this.angVel = new THREE.Vector3();
     this.lift = false;
     this.lx = 0; this.ly = 0; this.rx = 0; this.ry = 0;
     const hand = document.querySelector('#right-hand');
@@ -435,12 +436,14 @@ AFRAME.registerComponent('jetpack-flight', {
       }
     }
     if (vr) {
-      const k = 2.2 * dt;
-      const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -dz(this.rx) * k);
-      const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dz(this.rx) * k);
-      const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -dz(this.ry) * k);
-      this.nose.multiply(roll ? qz : qy);
-      this.nose.multiply(qx);
+      // Инерция вращения: стик задаёт ускорение, корабль продолжает крутиться после отпускания
+      const acc = 2.5 * dt, maxRate = 3;
+      this.angVel.x = Math.max(-maxRate, Math.min(maxRate, this.angVel.x - dz(this.ry) * acc));
+      if (roll) this.angVel.z = Math.max(-maxRate, Math.min(maxRate, this.angVel.z - dz(this.rx) * acc));
+      else this.angVel.y = Math.max(-maxRate, Math.min(maxRate, this.angVel.y - dz(this.rx) * acc));
+      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.angVel.x * dt));
+      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.angVel.y * dt));
+      this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), this.angVel.z * dt));
     }
     const aim = vr ? this.nose : (() => { const q = new THREE.Quaternion(); this.el.querySelector('[camera]').object3D.getWorldQuaternion(q); return q; })();
     const fwdV = new THREE.Vector3(0, 0, -1).applyQuaternion(aim);
