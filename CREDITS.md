@@ -6,3 +6,4 @@
 - Telescope by Francesco Coldesina, [source](https://sketchfab.com/3d-models/7220b6283360440fbbf8ccff08e25a7f), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), via Renderlyst / Objaverse; textures re-encoded.
 - Vintage Telephone by danatomashevych, [source](https://sketchfab.com/3d-models/7b9e48f7a223455aa9adf5115e4975c9), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), via Renderlyst / Objaverse; textures re-encoded.
 - Victorian armchair and lantern chandelier by Kirill Sannikov, Poly Haven, CC0.
+- Victorian cabinet (victorian-cabinet-quest.glb): generated locally from a FLUX.2 Klein image with Pixal3D (ComfyUI) by Pavel Semenov; mesh simplified and textures repaired for Quest.

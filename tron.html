@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тёмная VR-галерея</title>
+<script src="./aframe.min.js"></script>
+<script>
+// ---------------------------------------------------------------
+// Список предметов галереи. Чтобы добавить предмет, добавьте строку.
+//   src   – файл GLB рядом с этой страницей
+//   pos   – позиция [x, y, z] в метрах (y = 0 это пол)
+//   rot   – поворот по вертикали в градусах (0 = лицом к +z, к игроку на старте)
+//   fit   – [ось, размер в метрах]: подогнать размер и поставить на пол
+//   scale – масштаб по осям [x, y, z] (для шкафа сжимаем глубину)
+//   inst  – true: один файл загружается один раз и копируется (экономит память Quest)
+//   pool  – световое пятно на полу [цвет, радиус]
+// ---------------------------------------------------------------
+const WARM = '#ffb070', CYAN = '#19d3ff';
+const GALLERY = [
+  // Кресло в центре: главный ориентир, к нему лицом стоит игрок.
+  {id:'armchair', src:'polyhaven-armchair-01.glb', pos:[0, 0.0004315, -1.5], pool:[WARM, 1.5]},
+  {id:'chandelier', src:'polyhaven-lantern-chandelier-01.glb', pos:[0, 3.1, -1.5], scale:[.75,.75,.75]},
+
+  // Стол с телефоном и книгами слева.
+  {id:'desk', src:'victorian-desk.glb', pos:[-3.4, 0, -2.2], rot:90, fit:['y', 0.76], pool:[WARM, 1.7]},
+  {id:'books', src:'old-books.glb', pos:[-3.84, 0.77, -2.2], fit:['x', 0.40]},
+  {id:'phone', src:'vintage-telephone.glb', pos:[-3.04, 0.77, -2.05], fit:['y', 0.18]},
+
+  // Глобус справа и телескоп.
+  {id:'globe', src:'floor-globe-quest.glb', pos:[3.3, 0, -2.0], pool:[WARM, 1.0]},
+  {id:'telescope', src:'brass-telescope.glb', pos:[4.3, 0, 1.3], rot:-60, fit:['y', 1.45], pool:[WARM, 1.0]},
+
+  // Шкафы уходят в глубину, как стойки в пустоте.
+  {id:'cab-l1', src:'victorian-cabinet-quest.glb', inst:true, pos:[-4.8, 0, -3.8], rot:90,  scale:[1,1,.55], pool:[CYAN, 1.6]},
+  {id:'cab-l2', src:'victorian-cabinet-quest.glb', inst:true, pos:[-4.8, 0, -7.0], rot:90,  scale:[1,1,.55], pool:[CYAN, 1.6]},
+  {id:'cab-r1', src:'victorian-cabinet-quest.glb', inst:true, pos:[ 4.8, 0, -3.8], rot:-90, scale:[1,1,.55], pool:[CYAN, 1.6]},
+  {id:'cab-r2', src:'victorian-cabinet-quest.glb', inst:true, pos:[ 4.8, 0, -7.0], rot:-90, scale:[1,1,.55], pool:[CYAN, 1.6]},
+  {id:'cab-c',  src:'victorian-cabinet-quest.glb', inst:true, pos:[ 0, 0, -10.5], rot:0,    scale:[1,1,.55], pool:[CYAN, 1.8]},
+];
+
+AFRAME.registerComponent('fit-furniture', {
+  schema: { axis: {default: 'y'}, size: {default: 1} },
+  init: function () {
+    this.el.addEventListener('model-loaded', () => {
+      const model = this.el.getObject3D('mesh');
+      model.updateMatrixWorld(true);
+      let bounds = new THREE.Box3().setFromObject(model);
+      const dimensions = new THREE.Vector3(); bounds.getSize(dimensions);
+      const dimension = dimensions[this.data.axis];
+      if (!dimension || !Number.isFinite(dimension)) return;
+      model.scale.multiplyScalar(this.data.size / dimension);
+      model.updateMatrixWorld(true); bounds.setFromObject(model);
+      const origin = new THREE.Vector3(); this.el.object3D.getWorldPosition(origin);
+      const center = new THREE.Vector3(); bounds.getCenter(center);
+      const offset = new THREE.Vector3(origin.x-center.x, origin.y-bounds.min.y, origin.z-center.z);
+      const inverse = new THREE.Quaternion(); this.el.object3D.getWorldQuaternion(inverse).invert();
+      offset.applyQuaternion(inverse); model.position.add(offset);
+    }, {once:true});
+  }
+});
+
+// Один GLB загружается один раз, дальше копии делят геометрию и текстуры.
+AFRAME.registerComponent('instance-glb', {
+  schema: { src: {type: 'string'} },
+  init: function () {
+    const cache = (window.__glbCache = window.__glbCache || {});
+    const src = this.data.src;
+    if (!cache[src]) cache[src] = new Promise((ok, fail) => new THREE.GLTFLoader().load(src, ok, undefined, fail));
+    cache[src].then(gltf => {
+      this.el.setObject3D('mesh', gltf.scene.clone(true));
+      this.el.emit('model-loaded');
+    }).catch(e => console.error('instance-glb failed', src, e));
+  }
+});
+
+// Пол: тёмная сетка, исчезающая в тумане.
+AFRAME.registerComponent('grid-floor', {
+  schema: { radius: {default: 90}, cell: {default: 5} },
+  init: function () {
+    const size = 512, cells = 5, c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d');
+    g.fillStyle = '#03060b'; g.fillRect(0, 0, size, size);
+    const step = size / cells;
+    g.strokeStyle = 'rgba(25,211,255,0.22)'; g.lineWidth = 2;
+    for (let i = 1; i < cells; i++) {
+      g.beginPath(); g.moveTo(i*step, 0); g.lineTo(i*step, size); g.stroke();
+      g.beginPath(); g.moveTo(0, i*step); g.lineTo(size, i*step); g.stroke();
+    }
+    g.strokeStyle = 'rgba(40,225,255,0.85)'; g.lineWidth = 5;
+    g.strokeRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(this.data.radius * 2 / this.data.cell, this.data.radius * 2 / this.data.cell);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(this.data.radius, 64),
+      new THREE.MeshBasicMaterial({map: tex}));
+    mesh.rotation.x = -Math.PI / 2;
+    this.el.setObject3D('mesh', mesh);
+  }
+});
+
+// Световое пятно на полу под предметом.
+AFRAME.registerComponent('glow-pool', {
+  schema: { color: {default: '#19d3ff'}, radius: {default: 1.5}, opacity: {default: 0.5} },
+  init: function () {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.45, 'rgba(255,255,255,0.35)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(this.data.radius, 32),
+      new THREE.MeshBasicMaterial({map: new THREE.CanvasTexture(c), color: this.data.color, transparent: true,
+        opacity: this.data.opacity, blending: THREE.AdditiveBlending, depthWrite: false}));
+    mesh.rotation.x = -Math.PI / 2;
+    this.el.setObject3D('mesh', mesh);
+  }
+});
+
+// Градиентное небо с лёгким свечением у горизонта.
+AFRAME.registerComponent('void-sky', {
+  init: function () {
+    const c = document.createElement('canvas'); c.width = 8; c.height = 256;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0.00, '#010208'); grad.addColorStop(0.45, '#03060e');
+    grad.addColorStop(0.50, '#0a1c28'); grad.addColorStop(0.56, '#03060e'); grad.addColorStop(1.00, '#02030a');
+    g.fillStyle = grad; g.fillRect(0, 0, 8, 256);
+    const skyTex = new THREE.CanvasTexture(c); skyTex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(95, 24, 16),
+      new THREE.MeshBasicMaterial({map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false}));
+    this.el.setObject3D('mesh', mesh);
+  }
+});
+
+// Редкие светящиеся частицы для ощущения глубины.
+AFRAME.registerComponent('dust', {
+  schema: { count: {default: 220}, radius: {default: 22} },
+  init: function () {
+    const n = this.data.count, p = new Float32Array(n * 3);
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < n; i++) {
+      const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * this.data.radius;
+      p[i*3] = Math.cos(a) * r; p[i*3+1] = 0.3 + rnd() * 6; p[i*3+2] = Math.sin(a) * r;
+    }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
+    this.el.setObject3D('mesh', new THREE.Points(geo,
+      new THREE.PointsMaterial({color: '#7fe8ff', size: 0.045, transparent: true, opacity: 0.7, depthWrite: false})));
+  }
+});
+
+// Не даёт уйти слишком далеко от центра.
+AFRAME.registerComponent('limit-radius', {
+  schema: { max: {default: 14} },
+  tick: function () {
+    const p = this.el.object3D.position, d = Math.hypot(p.x, p.z);
+    if (d > this.data.max) { p.x *= this.data.max / d; p.z *= this.data.max / d; }
+  }
+});
+</script>
+</head>
+<body>
+  <a-scene background="color: #02040a"
+           fog="type: linear; color: #06101a; near: 7; far: 42"
+           renderer="antialias: true">
+
+    <!-- Освещение: холодный общий свет, тёплый над креслом, голубая подсветка сзади -->
+    <a-light type="ambient" color="#8fa0c5" intensity="1.0"></a-light>
+    <a-light type="directional" position="2 6 4" color="#ffffff" intensity="1.1"></a-light>
+    <a-light type="point" position="0 3 -1.5" color="#ffb070" intensity="9" distance="9" decay="2"></a-light>
+    <a-light type="point" position="0 1.4 -6" color="#19d3ff" intensity="14" distance="14" decay="2"></a-light>
+
+    <a-entity void-sky></a-entity>
+    <a-entity grid-floor></a-entity>
+    <a-entity dust></a-entity>
+
+    <!-- Предметы галереи создаются из списка GALLERY выше -->
+    <a-entity id="gallery"></a-entity>
+
+    <!-- Игрок и VR-камера -->
+    <a-entity id="player" position="0 0 3.2" limit-radius="max: 14">
+      <a-camera look-controls wasd-controls="acceleration: 15" position="0 1.6 0"></a-camera>
+      <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
+      <a-entity laser-controls="hand: right" id="right-hand"></a-entity>
+    </a-entity>
+  </a-scene>
+
+<script>
+// Строим сцену из списка GALLERY.
+(function () {
+  const root = document.querySelector('#gallery');
+  for (const it of GALLERY) {
+    const holder = document.createElement('a-entity');
+    holder.setAttribute('id', it.id + '-holder');
+    holder.setAttribute('position', it.pos.join(' '));
+    holder.setAttribute('rotation', '0 ' + (it.rot || 0) + ' 0');
+    if (it.scale) holder.setAttribute('scale', it.scale.join(' '));
+    const model = document.createElement(it.inst ? 'a-entity' : 'a-gltf-model');
+    model.setAttribute('id', it.id);
+    if (it.inst) model.setAttribute('instance-glb', 'src: ./' + it.src);
+    else model.setAttribute('src', './' + it.src);
+    if (it.fit) model.setAttribute('fit-furniture', `axis: ${it.fit[0]}; size: ${it.fit[1]}`);
+    holder.appendChild(model);
+    root.appendChild(holder);
+    if (it.pool) {
+      const pool = document.createElement('a-entity');
+      pool.setAttribute('position', `${it.pos[0]} 0.01 ${it.pos[2]}`);
+      pool.setAttribute('glow-pool', `color: ${it.pool[0]}; radius: ${it.pool[1]}; opacity: 0.45`);
+      root.appendChild(pool);
+    }
+  }
+})();
+
+// Управление Quest: левый стик – движение, правый – поворот на 30°.
+AFRAME.registerComponent('thumbstick-movement', {
+  init: function () {
+    this.axisX = 0;
+    this.axisY = 0;
+    const leftHand = document.querySelector('#left-hand');
+    leftHand.addEventListener('thumbstickmoved', (event) => {
+      this.axisX = event.detail.x;
+      this.axisY = event.detail.y;
+    });
+  },
+  tick: function (time, delta) {
+    if (!this.el.sceneEl.is('vr-mode')) return;
+    const deadzone = 0.15;
+    const x = Math.abs(this.axisX) > deadzone ? this.axisX : 0;
+    const y = Math.abs(this.axisY) > deadzone ? this.axisY : 0;
+    if (x === 0 && y === 0) return;
+    const player = document.querySelector('#player');
+    const camera = player.querySelector('[camera]');
+    const direction = new THREE.Vector3(x, 0, y);
+    const rotation = new THREE.Quaternion();
+    camera.object3D.getWorldQuaternion(rotation);
+    direction.applyQuaternion(rotation);
+    direction.y = 0;
+    direction.normalize();
+    const speed = 1.5;
+    const seconds = Math.min(delta / 1000, 0.05);
+    player.object3D.position.addScaledVector(direction, speed * seconds);
+  }
+});
+document.querySelector('#player').setAttribute('thumbstick-movement', '');
+
+AFRAME.registerComponent('snap-turn', {
+  init: function () {
+    this.ready = true;
+    const rightHand = document.querySelector('#right-hand');
+    rightHand.addEventListener('thumbstickmoved', (event) => {
+      const x = event.detail.x;
+      if (Math.abs(x) < 0.3) { this.ready = true; return; }
+      if (!this.ready || Math.abs(x) < 0.75) return;
+      this.ready = false;
+      const angle = x > 0 ? -Math.PI / 6 : Math.PI / 6;
+      this.el.object3D.rotation.y += angle;
+    });
+  }
+});
+document.querySelector('#player').setAttribute('snap-turn', '');
+</script>
+</body>
+</html>
