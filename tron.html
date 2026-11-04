@@ -256,7 +256,9 @@ AFRAME.registerComponent('limit-radius', {
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0 3.2" limit-radius="max: 14">
-      <a-camera look-controls wasd-controls="acceleration: 15" position="0 1.6 0" fov="70"></a-camera>
+      <a-camera look-controls wasd-controls="acceleration: 15" position="0 1.6 0" fov="70">
+        <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
+      </a-camera>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
       <a-entity laser-controls="hand: right" id="right-hand"></a-entity>
     </a-entity>
@@ -305,6 +307,9 @@ AFRAME.registerComponent('thumbstick-movement', {
     const x = Math.abs(this.axisX) > deadzone ? this.axisX : 0;
     const y = Math.abs(this.axisY) > deadzone ? this.axisY : 0;
     if (x === 0 && y === 0) return;
+    // В полёте ходьба отключена: управляет только ранец.
+    const jet = document.querySelector('#player').components['jetpack-flight'];
+    if (jet && !jet.grounded) return;
     const player = document.querySelector('#player');
     const camera = player.querySelector('[camera]');
     const direction = new THREE.Vector3(x, 0, y);
@@ -335,6 +340,56 @@ AFRAME.registerComponent('snap-turn', {
   }
 });
 document.querySelector('#player').setAttribute('snap-turn', '');
+
+// Ранец: гравитация, инерция, тяга по взгляду (как посадочный модуль).
+// Тяга: триггер правой руки (на ПК – пробел). Посадка мягкая до 6 м/с, быстрее – разбивается и возвращает на старт.
+const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 6, START = { x: 0, y: 0, z: 3.2 };
+AFRAME.registerComponent('jetpack-flight', {
+  init: function () {
+    this.vel = new THREE.Vector3();
+    this.thrusting = false;
+    this.grounded = true;
+    this.crashing = false;
+    this.plane = document.querySelector('#crash-plane');
+    const hand = document.querySelector('#right-hand');
+    hand.addEventListener('triggerdown', () => { this.thrusting = true; });
+    hand.addEventListener('triggerup', () => { this.thrusting = false; });
+    window.addEventListener('keydown', e => { if (e.code === 'Space') this.thrusting = true; });
+    window.addEventListener('keyup', e => { if (e.code === 'Space') this.thrusting = false; });
+  },
+  tick: function (time, delta) {
+    if (this.crashing) return;
+    const dt = Math.min(delta / 1000, 0.05);
+    const p = this.el.object3D.position;
+    if (this.thrusting) {
+      const q = new THREE.Quaternion();
+      this.el.querySelector('[camera]').object3D.getWorldQuaternion(q);
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+      this.vel.addScaledVector(fwd, THRUST * dt);
+      this.grounded = false;
+    }
+    if (this.grounded) { this.vel.set(0, 0, 0); return; }
+    this.vel.y -= GRAVITY * dt;
+    p.addScaledVector(this.vel, dt);
+    if (p.y <= 0 && this.vel.y <= 0) {
+      if (-this.vel.y > CRASH_SPEED) { this.crash(); return; }
+      p.y = 0; this.vel.set(0, 0, 0); this.grounded = true;
+    }
+  },
+  crash: function () {
+    this.crashing = true;
+    this.thrusting = false;
+    this.vel.set(0, 0, 0);
+    this.plane.setAttribute('material', 'opacity', 1);
+    setTimeout(() => {
+      this.el.object3D.position.set(START.x, START.y, START.z);
+      this.grounded = true;
+      this.plane.setAttribute('material', 'opacity', 0);
+      this.crashing = false;
+    }, 700);
+  }
+});
+document.querySelector('#player').setAttribute('jetpack-flight', '');
 </script>
 
 <script>
