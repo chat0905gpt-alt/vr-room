@@ -22,24 +22,12 @@ const GALLERY = [
   {id:'armchair', src:'polyhaven-armchair-01.glb', pos:[0, 0.0004315, -1.5], pool:[WARM, 1.5]},
   {id:'chandelier', src:'polyhaven-lantern-chandelier-01.glb', pos:[0, 3.1, -1.5], scale:[.75,.75,.75]},
 
-  // Стол с телефоном и книгами слева.
-  {id:'desk', src:'victorian-desk.glb', pos:[-3.4, 0, -2.2], rot:90, fit:['y', 0.76], pool:[WARM, 1.7]},
-  {id:'books', src:'old-books.glb', pos:[-3.84, 0.77, -2.2], fit:['x', 0.40]},
-  {id:'phone', src:'vintage-telephone.glb', pos:[-3.04, 0.77, -2.05], fit:['y', 0.18]},
-
   // Глобус справа и телескоп.
   {id:'globe', src:'floor-globe-quest.glb', pos:[3.3, 0, -2.0], pool:[WARM, 1.0]},
   {id:'telescope', src:'brass-telescope.glb', pos:[4.3, 0, 1.3], rot:-60, fit:['y', 1.45], pool:[WARM, 1.0]},
 
-  // Шкафы уходят в глубину, как стойки в пустоте.
-  {id:'cab-l1', src:'victorian-cabinet-quest.glb', inst:true, pos:[-4.8, 0, -3.8], rot:90,  scale:[1,1,.55], pool:[CYAN, 1.6]},
-  {id:'cab-l2', src:'victorian-cabinet-quest.glb', inst:true, pos:[-4.8, 0, -7.0], rot:90,  scale:[1,1,.55], pool:[CYAN, 1.6]},
-  {id:'cab-r1', src:'victorian-cabinet-quest.glb', inst:true, pos:[ 4.8, 0, -3.8], rot:-90, scale:[1,1,.55], pool:[CYAN, 1.6]},
-  {id:'cab-r2', src:'victorian-cabinet-quest.glb', inst:true, pos:[ 4.8, 0, -7.0], rot:-90, scale:[1,1,.55], pool:[CYAN, 1.6]},
-  {id:'cab-c',  src:'victorian-cabinet-quest.glb', inst:true, pos:[ 0, 0, -10.5], rot:0,    scale:[1,1,.55], pool:[CYAN, 1.8]},
-
-  // Новый шкаф (сгенерирован заново, глубина сжата примерно до 0,58 м).
-  {id:'cab-new', src:'victorian-cabinet2-quest.glb', pos:[-2.4, 0, -7.6], rot:0, scale:[1,1,.25], pool:[WARM, 1.5]},
+  // Шкаф из 4 видов (Multi-view): стоит ровно, без перекоса, глубина натуральная.
+  {id:'cab-mv', src:'victorian-cabinet-mv-quest.glb', pos:[-4.5, 0, -4.0], rot:90, pool:[WARM, 1.6]},
 
   // Напольные часы (сгенерированы по фото; стекло и циферблат перерисованы, глубина сжата до 0,4 м).
   {id:'clock', src:'grandfather-clock-quest.glb', pos:[2.4, 0, -7.6], rot:0, scale:[1,1,.6], pool:[WARM, 1.2]},
@@ -106,7 +94,7 @@ AFRAME.registerComponent('grid-floor', {
       new THREE.MeshStandardMaterial({map: tex, roughness: 1, metalness: 0}));
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
-    mesh.position.y = 0.01; // чуть выше среза планеты, чтобы не мерцало
+    mesh.position.y = 0.05; // чуть выше среза планеты, чтобы не мерцало
     this.el.setObject3D('mesh', mesh);
   }
 });
@@ -258,7 +246,7 @@ AFRAME.registerComponent('limit-radius', {
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0.9 3.2">
-      <a-camera look-controls wasd-controls="acceleration: 15" position="0 0.7 0" fov="70">
+      <a-camera look-controls position="0 0.7 0" fov="70">
         <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
       </a-camera>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
@@ -417,8 +405,10 @@ AFRAME.registerComponent('jetpack-flight', {
     left.addEventListener('triggerdown', () => { this.lift = true; });
     left.addEventListener('triggerup', () => { this.lift = false; });
     left.addEventListener('thumbstickmoved', e => { this.lx = e.detail.x; this.ly = e.detail.y; });
-    window.addEventListener('keydown', e => { if (e.code === 'Space') this.thrusting = true; });
-    window.addEventListener('keyup', e => { if (e.code === 'Space') this.thrusting = false; });
+    // Клавиатура (ПК): WASD – тяга/ходьба, Shift – вверх, Ctrl – вниз
+    this.keys = {};
+    window.addEventListener('keydown', e => { this.keys[e.code] = true; });
+    window.addEventListener('keyup', e => { this.keys[e.code] = false; });
   },
   tick: function (time, delta) {
     if (this.crashing) return;
@@ -450,13 +440,25 @@ AFRAME.registerComponent('jetpack-flight', {
       }
     }
     if (vr) {
-      // Инерция вращения: стик задаёт ускорение, корабль продолжает крутиться после отпускания
-      const acc = 2.5 * dt, maxRate = 1.5;
-      // Слабое затухание: инерция остаётся, но без стика вращение постепенно успокаивается
-      this.angVel.multiplyScalar(Math.max(0, 1 - 0.35 * dt));
-      this.angVel.x = Math.max(-maxRate, Math.min(maxRate, this.angVel.x - dz(this.ry) * acc));
-      if (roll) this.angVel.z = Math.max(-maxRate, Math.min(maxRate, this.angVel.z - dz(this.rx) * acc));
-      else this.angVel.y = Math.max(-maxRate, Math.min(maxRate, this.angVel.y - dz(this.rx) * acc));
+      const maxRate = 1.5;
+      const stick = Math.abs(this.rx) > 0.15 || Math.abs(this.ry) > 0.15;
+      if (this.grounded) {
+        // На поверхности инерции нет: стик сразу задаёт скорость поворота, без накопления
+        this.angVel.set(-dz(this.ry) * maxRate, roll ? 0 : -dz(this.rx) * maxRate, roll ? -dz(this.rx) * maxRate : 0);
+        if (!stick) {
+          // Без стика нос сам выравнивается: сохраняем направление взгляда, убираем наклон и крен
+          const f = new THREE.Vector3(0, 0, -1).applyQuaternion(this.nose);
+          const level = new THREE.Quaternion().setFromAxisAngle(WORLD_UP, Math.atan2(-f.x, -f.z));
+          this.nose.slerp(level, Math.min(1, dt * 6));
+        }
+      } else {
+        // В полёте – инерция вращения: стик задаёт ускорение, корабль продолжает крутиться после отпускания
+        const acc = 2.5 * dt;
+        this.angVel.multiplyScalar(Math.max(0, 1 - 0.35 * dt));
+        this.angVel.x = Math.max(-maxRate, Math.min(maxRate, this.angVel.x - dz(this.ry) * acc));
+        if (roll) this.angVel.z = Math.max(-maxRate, Math.min(maxRate, this.angVel.z - dz(this.rx) * acc));
+        else this.angVel.y = Math.max(-maxRate, Math.min(maxRate, this.angVel.y - dz(this.rx) * acc));
+      }
       this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.angVel.x * dt));
       this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.angVel.y * dt));
       this.nose.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), this.angVel.z * dt));
@@ -466,7 +468,28 @@ AFRAME.registerComponent('jetpack-flight', {
     const rightV = new THREE.Vector3(1, 0, 0).applyQuaternion(aim);
     const upV = new THREE.Vector3(0, 1, 0).applyQuaternion(aim);
     const TH = THRUST * dt;
-    if (!vr && this.thrusting) { this.vel.addScaledVector(fwdV, TH); this.grounded = false; }
+    if (!vr) {
+      // ПК: на полу WASD – ходьба по взгляду, в воздухе WASD – тяга, Shift/Ctrl – подъём и спуск
+      const K = this.keys || {};
+      const f = fwdV.clone().setY(0); if (f.lengthSq() > 1e-8) f.normalize();
+      const r = rightV.clone().setY(0); if (r.lengthSq() > 1e-8) r.normalize();
+      if (this.grounded && !this.nearPlanet) {
+        const w = new THREE.Vector3();
+        if (K.KeyW) w.add(f);
+        if (K.KeyS) w.sub(f);
+        if (K.KeyD) w.add(r);
+        if (K.KeyA) w.sub(r);
+        if (w.lengthSq() > 0) p.addScaledVector(w.normalize(), 1.5 * dt);
+      }
+      if (!this.grounded) {
+        if (K.KeyW) this.vel.addScaledVector(fwdV, TH);
+        if (K.KeyS) this.vel.addScaledVector(fwdV, -TH);
+        if (K.KeyD) this.vel.addScaledVector(rightV, TH);
+        if (K.KeyA) this.vel.addScaledVector(rightV, -TH);
+      }
+      if (K.ShiftLeft || K.ShiftRight) { this.vel.addScaledVector(upV, TH); this.grounded = false; }
+      if (K.ControlLeft || K.ControlRight) { this.vel.addScaledVector(upV, -TH); this.grounded = false; }
+    }
     if (vr) {
       if (tr > 0.05) { this.vel.addScaledVector(upV, tr * TH); this.grounded = false; }
       if (tl > 0.05) { this.vel.addScaledVector(upV, -tl * TH); this.grounded = false; }
