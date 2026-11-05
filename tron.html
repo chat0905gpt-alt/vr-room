@@ -870,7 +870,7 @@ AFRAME.registerComponent('hud', {
     const cm = new THREE.MeshBasicMaterial({ color: '#e8f6ff', transparent: true, opacity: 0.85, depthTest: false, depthWrite: false });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.0035, 0.0055, 28), cm); ring.position.set(0, 0, -1); ring.renderOrder = 1000;
     const dot = new THREE.Mesh(new THREE.CircleGeometry(0.0009, 8), cm); dot.position.set(0, 0, -1); dot.renderOrder = 1000;
-    this.el.object3D.add(ring); this.el.object3D.add(dot);
+    this.el.object3D.add(ring); this.el.object3D.add(dot); this.cross = [ring, dot];
     this.acc = 0;
   },
   nearest: function (jf, t) {
@@ -902,6 +902,8 @@ AFRAME.registerComponent('hud', {
     c.closePath(); c.fill();
   },
   tick: function (time) {
+    const jf0 = document.querySelector('#player').components['jetpack-flight'];
+    if (this.cross && jf0) this.cross.forEach(m => { m.visible = !jf0.piloting; });
     if (time - this.acc < 100) return;
     this.acc = time;
     const jf = document.querySelector('#player').components['jetpack-flight'];
@@ -967,59 +969,44 @@ const SHIP_EYE = new THREE.Vector3(0, 0.35, -0.3);     // глаза пилот�
 const SHIP_EXIT = new THREE.Vector3(2.6, -0.65, 0.2);  // куда встаёт герой при выходе (справа от корабля)
 const SHIP_PTS = (() => {
   const a = [];
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.25, -1.3, sz * 1.15, 0.3, 0]);        // опоры (тип 0)
-  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.1, sy * 0.8, sz * 1.3, 0.08, 1]); // углы корпуса
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.45, -0.1, sz * 0.5, 0.4, 1]);          // двигатели
-  a.push([0, 0.8, 0, 0.08, 1], [1.1, 0, 0, 0.08, 1], [-1.1, 0, 0, 0.08, 1]);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.25, -1.3, sz * 1.15, 0.3, 0]);   // опоры (тип 0)
+  // Точки корпуса на поверхности эллипсоида 1.15 × 1.0 × 1.4 (тип 1)
+  a.push([0, -0.92, 0, 0.08, 1], [0, -0.7, -1.0, 0.08, 1], [0, -0.7, 1.0, 0.08, 1], [0.8, -0.65, 0, 0.08, 1], [-0.8, -0.65, 0, 0.08, 1]);
+  a.push([1.1, 0, 0, 0.08, 1], [-1.1, 0, 0, 0.08, 1], [0, 0.9, 0, 0.08, 1]);
   return a;
 })();
+// Пушки на бортах: концы стволов в координатах модели (стрельба строго вперёд, по оси корпуса)
+const SHIP_GUNS = [new THREE.Vector3(1.12, -0.1, -1.92), new THREE.Vector3(-1.12, -0.1, -1.92)];
 const SHIP_PAD_CRASH = 12, SHIP_HULL_CRASH = 7, SHIP_MU = 1.0;
 
 function buildShipModel() {
   const g = new THREE.Group();
-  const M = (c, m, r, o) => new THREE.MeshStandardMaterial(Object.assign({ color: c, metalness: m, roughness: r }, o || {}));
-  const hullM = M('#b4bcc9', 0.1, 0.55), darkM = M('#3a3f4a', 0.1, 0.6), accM = M('#ff7a1a', 0.1, 0.5), inM = M('#4a4f5c', 0.1, 0.7);
-  const glowM = new THREE.MeshBasicMaterial({ color: '#18e0ff' });
-  const box = (w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; };
-  const rod = (ax, ay, az, bx, by, bz, r, mat) => {
-    const A = new THREE.Vector3(ax, ay, az), B = new THREE.Vector3(bx, by, bz);
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, A.distanceTo(B), 10), mat);
-    m.position.copy(A).add(B).multiplyScalar(0.5);
-    m.quaternion.setFromUnitVectors(AXIS_Y, B.clone().sub(A).normalize());
-    m.castShadow = true; g.add(m); return m;
-  };
-  const T = 0.08;
-  // Корпус-кабина: панели с оконным проёмом спереди
-  box(2.2, T, 2.6, 0, -0.8, 0, inM);
-  box(2.2, T, 2.6, 0, 0.8, 0, hullM);
-  box(2.2, 1.6, T, 0, 0, 1.3, hullM);
-  box(T, 1.6, 2.6, -1.1, 0, 0, hullM);
-  box(T, 1.6, 2.6, 1.1, 0, 0, hullM);
-  box(0.02, 0.14, 2.64, -1.12, 0, 0, accM); box(0.02, 0.14, 2.64, 1.12, 0, 0, accM); box(2.24, 0.14, 0.02, 0, 0, 1.32, accM); // оранжевый пояс снаружи
-  // Лобовое стекло и стойки
-  // Передняя часть – целиком стекло, без стоек: как в кабине Ми-8 и батискафе
-  const glassM = new THREE.MeshStandardMaterial({ color: '#9fe8ff', metalness: 0, roughness: 0.05, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
-  box(2.2, 1.6, 0.02, 0, 0, -1.3, glassM).castShadow = false;
-  // Кабина изнутри: кресло, приборная панель
-  box(0.7, 0.12, 0.7, 0, -0.35, 0.15, darkM);        // сиденье
-  box(0.7, 0.8, 0.12, 0, 0.0, 0.5, darkM);           // спинка
-  box(1.8, 0.35, 0.5, 0, -0.45, -1.0, darkM);        // панель
-  box(1.4, 0.04, 0.3, 0, -0.26, -1.02, glowM);       // светящийся экран
+  const M = (c, m, r) => new THREE.MeshStandardMaterial({ color: c, metalness: m, roughness: r });
+  const hullM = M('#b4bcc9', 0.1, 0.55), darkM = M('#3a3f4a', 0.1, 0.6), accM = M('#ff7a1a', 0.1, 0.5);
+  const glassM = new THREE.MeshStandardMaterial({ color: '#9fe8ff', metalness: 0, roughness: 0.05, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = mat !== glassM; g.add(m); return m; };
+  // Корпус-сарделька: эллипсоид вдоль оси Z, нос в -Z
+  add(new THREE.SphereGeometry(1, 40, 24), hullM, 0, 0, 0).scale.set(1.15, 1.0, 1.4);
+  // Носовая часть – полностью стекло: полусфера, обращённая вперёд
+  const cap = add(new THREE.SphereGeometry(1, 40, 24, 0, Math.PI * 2, 0, Math.PI / 2), glassM, 0, 0, -0.5);
+  cap.rotation.x = -Math.PI / 2; cap.scale.set(1.07, 1.0, 0.95);
+  // Кресло пилота и подсветка внутри
+  add(new THREE.BoxGeometry(0.7, 0.12, 0.7), darkM, 0, -0.35, 0.15);
+  add(new THREE.BoxGeometry(0.7, 0.8, 0.12), darkM, 0, 0.0, 0.5);
   // Ножки и опоры
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    rod(sx * 0.9, -0.8, sz * 1.0, sx * 1.25, -1.55, sz * 1.15, 0.07, darkM);
-    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.08, 20), hullM);
-    pad.position.set(sx * 1.25, -1.57, sz * 1.15); pad.castShadow = true; g.add(pad);
+    const from = new THREE.Vector3(sx * 0.9, -0.8, sz * 1.0), to = new THREE.Vector3(sx * 1.25, -1.55, sz * 1.15);
+    const r = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, from.distanceTo(to), 10), darkM);
+    r.position.copy(from).add(to).multiplyScalar(0.5); r.quaternion.setFromUnitVectors(AXIS_Y, to.clone().sub(from).normalize());
+    r.castShadow = true; g.add(r);
+    add(new THREE.CylinderGeometry(0.3, 0.34, 0.08, 20), hullM, sx * 1.25, -1.57, sz * 1.15);
   }
-  // Боковые двигатели: корпус, сопло сзади, оранжевая полоса, крепление к кабине
+  // Пушки на бортах: крепление и ствол вдоль оси корпуса
   for (const sx of [-1, 1]) {
-    const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.5, 20), hullM);
-    pod.rotation.x = Math.PI / 2; pod.position.set(sx * 1.45, -0.1, 0); pod.castShadow = true; g.add(pod);
-    const nz = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 0.25, 20), darkM);
-    nz.rotation.x = Math.PI / 2; nz.position.set(sx * 1.45, -0.1, 0.85); g.add(nz);
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), accM);
-    cap.rotation.x = -Math.PI / 2; cap.position.set(sx * 1.45, -0.1, -0.75); g.add(cap);
-    box(0.4, 0.12, 0.5, sx * 1.25, -0.1, 0.0, darkM);
+    add(new THREE.BoxGeometry(0.4, 0.4, 0.6), darkM, sx * 1.2, -0.1, -0.5);
+    const barrel = add(new THREE.CylinderGeometry(0.12, 0.14, 1.3, 16), darkM, sx * 1.12, -0.1, -1.25);
+    barrel.rotation.x = Math.PI / 2;
+    add(new THREE.CylinderGeometry(0.16, 0.16, 0.12, 16), accM, sx * 1.12, -0.1, -1.0).rotation.x = Math.PI / 2;
   }
   return g;
 }
@@ -1032,6 +1019,13 @@ AFRAME.registerComponent('ship', {
     this.piloting = false; this.prevE = false; this.retHold = 0; this.accelMag = 0;
     this.prevVel = new THREE.Vector3(); this.nContacts = 0;
     this.group = buildShipModel();
+    // Прицел на стекле носа: едет вместе с кораблём, не с головой
+    this.reticle = new THREE.Group();
+    const rm = new THREE.MeshBasicMaterial({ color: '#e8f6ff', transparent: true, opacity: 0.85, depthTest: false, depthWrite: false });
+    const rr = new THREE.Mesh(new THREE.RingGeometry(0.012, 0.018, 32), rm), rd = new THREE.Mesh(new THREE.CircleGeometry(0.003, 10), rm);
+    this.reticle.add(rr); this.reticle.add(rd);
+    this.reticle.position.set(0, 0, -1.6); this.reticle.renderOrder = 1000; this.reticle.visible = false;
+    this.group.add(this.reticle);
     this.el.setObject3D('mesh', this.group);
     this.cache = [];
     const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
@@ -1249,6 +1243,7 @@ AFRAME.registerComponent('ship', {
     if (near) this.hint.position.copy(this.pos).addScaledVector(WORLD_UP, 2.4);
     // Показываем корабль
     this.group.quaternion.copy(this.q);
+    this.reticle.visible = this.piloting;
     this.group.position.copy(this.pos).sub(SHIP_COM.clone().applyQuaternion(this.q));
     if (this.piloting) {
       const rig = jf.el.object3D;
@@ -1266,7 +1261,7 @@ const ZERO_V = new THREE.Vector3();
 
 <script>
 // ===== Стрельба: пули с физикой (их тянет гравитация планет), мишени на кубе, которые разлетаются на обломки =====
-const BULLET_SPEED = 150, BULLET_LIFE = 6, FIRE_COOLDOWN = 0.14, RESPAWN_DELAY = 10; // мишень возвращается через 10 с после разрушения
+const BULLET_SPEED = 150, BULLET_LIFE = 6, FIRE_COOLDOWN = 0.14, RESPAWN_DELAY = 10; // все мишени возвращаются через 10 с после того, как разбита последняя
 const CUBE_I = BODIES.findIndex(b => b.poly === 'cube');
 const TARGET_HS = 2;
 const TARGET_LAYOUT = [];
@@ -1313,7 +1308,7 @@ AFRAME.registerComponent('gunnery', {
     this.bulletMat = new THREE.MeshBasicMaterial({ color: '#ffb347' });
     this.debrisGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
     this.debrisMat = new THREE.MeshStandardMaterial({ color: '#e0893a', emissive: '#3a1a00', emissiveIntensity: 0.5 });
-    this.cubeC = new THREE.Vector3(); this.cubeQi = new THREE.Quaternion();
+    this.cubeC = new THREE.Vector3(); this.cubeQi = new THREE.Quaternion(); this.allDownAt = undefined; this.shots = 0;
   },
   placeTargets: function (t) {
     const c = bodyPos(CUBE_I, t);
@@ -1328,6 +1323,7 @@ AFRAME.registerComponent('gunnery', {
     const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMat);
     mesh.position.copy(o); this.scene.add(mesh);
     this.bullets.push({ p: o.clone(), v: d.clone().normalize().multiplyScalar(BULLET_SPEED).add(base), age: 0, mesh });
+    this.shots++;
   },
   burst: function (pos, n, power) {
     for (let k = 0; k < n; k++) {
@@ -1339,7 +1335,7 @@ AFRAME.registerComponent('gunnery', {
     }
   },
   destroy: function (T, t) {
-    T.alive = false; T.downAt = t; T.mesh.visible = false;
+    T.alive = false; T.mesh.visible = false;
     this.burst(T.world, 14, 1);
   },
   hitTest: function (p, t) {
@@ -1362,10 +1358,19 @@ AFRAME.registerComponent('gunnery', {
     this.cd = Math.max(0, this.cd - dt);
     if (fire && this.cd <= 0) {
       this.cd = FIRE_COOLDOWN;
-      const cam = document.querySelector('#player [camera]').object3D;
-      const o = new THREE.Vector3(), d = new THREE.Vector3();
-      cam.getWorldPosition(o); cam.getWorldDirection(d);
-      this.spawn(o.addScaledVector(d, 0.6), d, jf.vel.clone());
+      if (jf.piloting) {
+        const sh = document.querySelector('#ship').components['ship'];
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(sh.q);
+        for (const G of SHIP_GUNS) {
+          const o = G.clone().sub(SHIP_COM).applyQuaternion(sh.q).add(sh.pos);
+          this.spawn(o, fwd, sh.vel.clone());
+        }
+      } else {
+        const cam = document.querySelector('#player [camera]').object3D;
+        const o = new THREE.Vector3(), d = new THREE.Vector3();
+        cam.getWorldPosition(o); cam.getWorldDirection(d);
+        this.spawn(o.addScaledVector(d, 0.6), d, jf.vel.clone());
+      }
     }
     // Пули: несколько подшагов, чтобы не проскочить тонкие мишени
     const SUB = 4, h = dt / SUB, g = new THREE.Vector3();
@@ -1390,7 +1395,10 @@ AFRAME.registerComponent('gunnery', {
       if (d.age > 4 || insideBody(d.mesh.position, t) !== -1) { this.scene.remove(d.mesh); this.debris.splice(i, 1); }
     }
     // Каждая мишень возвращается сама через RESPAWN_DELAY секунд после разрушения
-    for (const T of this.tgt) if (!T.alive && t - T.downAt > RESPAWN_DELAY) { T.alive = true; T.mesh.visible = true; }
+    if (this.tgt.every(T => !T.alive)) {
+      if (this.allDownAt === undefined) this.allDownAt = t;
+      if (t - this.allDownAt > RESPAWN_DELAY) { for (const T of this.tgt) { T.alive = true; T.mesh.visible = true; } this.allDownAt = undefined; }
+    }
   }
 });
 </script>
