@@ -225,7 +225,6 @@ AFRAME.registerComponent('limit-radius', {
 </head>
 <body>
   <a-scene id="scene" background="color: #1c1d22"
-           fog="type: linear; color: #3a3c42; near: 6; far: 32"
            renderer="antialias: true">
 
     <!-- Освещение: холодный общий свет, тёплый над креслом, голубая подсветка сзади -->
@@ -246,7 +245,7 @@ AFRAME.registerComponent('limit-radius', {
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0.9 3.2">
-      <a-camera look-controls position="0 0.7 0" fov="70">
+      <a-camera look-controls position="0 0.17 0" fov="70">
         <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
       </a-camera>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
@@ -340,10 +339,11 @@ const BOX = { x: 0.25, y: 0.9, z: 0.25 };
 const CAP_A = 40, BIG_R = 120;
 const BIG_C = new THREE.Vector3(0, -Math.sqrt(BIG_R * BIG_R - CAP_A * CAP_A), 0);
 const BODIES = [
-  { big: true, r: BIG_R, color: '#5a4a3e', spin: 0, g: 4.5 },
-  { r: 28, color: '#6e5d52', orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
-  { r: 12, color: '#8a6a4c', orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
-  { r: 18, color: '#4f5a66', orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 4.5 }
+  // Юпитер (большая планета), Сатурн, Нептун и Уран: полосы по широте, как у настоящих
+  { big: true, r: BIG_R, bands: ['#c8a27a', '#e8d3b0', '#a8724a', '#d9b48a', '#8c5a3a', '#e2c49a'], spin: 0.04, g: 4.5 },
+  { r: 28, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
+  { r: 12, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
+  { r: 18, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 4.5 }
 ];
 function bodyPos(i, t) {
   if (BODIES[i].big) return BIG_C.clone();
@@ -355,14 +355,15 @@ AFRAME.registerComponent('orbit-body', {
   schema: { index: { type: 'int' } },
   init: function () {
     const b = BODIES[this.data.index];
-    // Полосы вдоль меридианов – чтобы вращение было видно
+    // Полосы по широте (как у Юпитера) и одно пятно: без него вращения вокруг оси не видно
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
-    g.fillStyle = b.color; g.fillRect(0, 0, 256, 128);
-    for (let x = 0; x < 256; x += 4) {
-      g.fillStyle = 'rgba(0,0,0,' + (((x * 37) % 11) / 40) + ')';
-      g.fillRect(x, 0, 2 + (x * 13) % 5, 128);
+    for (let k = 0; k < 14; k++) {
+      g.fillStyle = b.bands[(k * 7) % b.bands.length];
+      g.fillRect(0, k * 128 / 14, 256, 128 / 14 + 1);
     }
+    if (b.big) { g.fillStyle = 'rgba(176,96,62,0.85)'; g.beginPath(); g.ellipse(70, 80, 16, 8, 0, 0, Math.PI * 2); g.fill(); }
+    else { g.fillStyle = 'rgba(255,255,255,0.15)'; g.beginPath(); g.ellipse(180, 60, 10, 4, 0, 0, Math.PI * 2); g.fill(); }
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
     const geo = new THREE.SphereGeometry(b.r, 48, 32);
     if (b.big) { // срез сверху: вершины выше уровня пола прижимаем к нему
@@ -405,7 +406,7 @@ AFRAME.registerComponent('jetpack-flight', {
     left.addEventListener('triggerdown', () => { this.lift = true; });
     left.addEventListener('triggerup', () => { this.lift = false; });
     left.addEventListener('thumbstickmoved', e => { this.lx = e.detail.x; this.ly = e.detail.y; });
-    // Клавиатура (ПК): WASD – тяга/ходьба, Shift – вверх, Ctrl – вниз
+    // Клавиатура (ПК): WASD – тяга/ходьба, Пробел – вверх, Shift – вниз
     this.keys = {};
     window.addEventListener('keydown', e => { this.keys[e.code] = true; });
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
@@ -487,8 +488,8 @@ AFRAME.registerComponent('jetpack-flight', {
         if (K.KeyD) this.vel.addScaledVector(rightV, TH);
         if (K.KeyA) this.vel.addScaledVector(rightV, -TH);
       }
-      if (K.ShiftLeft || K.ShiftRight) { this.vel.addScaledVector(upV, TH); this.grounded = false; }
-      if (K.ControlLeft || K.ControlRight) { this.vel.addScaledVector(upV, -TH); this.grounded = false; }
+      if (K.Space) { this.vel.addScaledVector(upV, TH); this.grounded = false; }
+      if (K.ShiftLeft || K.ShiftRight) { this.vel.addScaledVector(upV, -TH); this.grounded = false; }
     }
     if (vr) {
       if (tr > 0.05) { this.vel.addScaledVector(upV, tr * TH); this.grounded = false; }
