@@ -263,6 +263,12 @@ AFRAME.registerComponent('limit-radius', {
     <a-entity orbit-body="index: 1"></a-entity>
     <a-entity orbit-body="index: 2"></a-entity>
     <a-entity orbit-body="index: 3"></a-entity>
+    <a-entity orbit-body="index: 4"></a-entity>
+    <a-entity orbit-body="index: 5"></a-entity>
+    <a-entity orbit-body="index: 6"></a-entity>
+    <a-entity orbit-body="index: 7"></a-entity>
+    <a-entity orbit-body="index: 8"></a-entity>
+    <a-entity orbit-body="index: 9"></a-entity>
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
@@ -329,7 +335,9 @@ AFRAME.registerComponent('thumbstick-movement', {
     const rotation = new THREE.Quaternion();
     camera.object3D.getWorldQuaternion(rotation);
     direction.applyQuaternion(rotation);
-    direction.y = 0;
+    // Ходьба по касательной к поверхности, на которой стоишь (пол, планета или многогранник)
+    const nUp = jet && jet.grounded ? jet.surfN : new THREE.Vector3(0, 1, 0);
+    direction.addScaledVector(nUp, -direction.dot(nUp));
     direction.normalize();
     const speed = 1.5;
     const seconds = Math.min(delta / 1000, 0.05);
@@ -366,20 +374,144 @@ const BIG_C = new THREE.Vector3(0, -(BIG_R + PED), 0);
 const BODIES = [
   // Юпитер (большая планета), Сатурн, Нептун и Уран: полосы по широте, как у настоящих
   { big: true, r: BIG_R, bands: ['#c8a27a', '#e8d3b0', '#a8724a', '#d9b48a', '#8c5a3a', '#e2c49a'], spin: 0.04, g: 4.5 },
-  { r: 28, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
-  { r: 12, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
-  { r: 18, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 4.5 }
+  { moon: true, r: 28, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
+  { moon: true, r: 12, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
+  { moon: true, r: 18, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 4.5 },
+  // Платоновы тела и пентакисдодекаэдр: огромные обелиски (радиус 60 м) на орбитах 450–600 м, светятся рёбрами.
+  // Куб – чёрный с красными рёбрами, остальные – тёмные с голубыми рёбрами. Блеск – от карты окружения.
+  { poly: 'tetra', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 450, phase: 0.0, period: 260, spin: 0.05, g: 2, ty: 0.95, tz: 0.3 },
+  { poly: 'cube', size: 60, edge: '#ff2a2a', face: '#33363f', orbit: 520, phase: 2.1, period: 300, spin: -0.04, g: 2, ty: 0.6, tz: 0.8 },
+  { poly: 'octa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 580, phase: 4.2, period: 340, spin: 0.06, g: 2, ty: 0.85, tz: -0.5 },
+  { poly: 'dodeca', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 600, phase: 1.0, period: 380, spin: -0.05, g: 2, ty: 0.4, tz: 0.9 },
+  { poly: 'icosa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 460, phase: 3.1, period: 420, spin: 0.03, g: 2, ty: 0.7, tz: -0.7 },
+  { poly: 'pentakis', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 560, phase: 5.0, period: 460, spin: -0.03, g: 2, ty: 0.2, tz: 0.98 }
 ];
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+// Пентакисдодекаэдр: на каждой грани додекаэдра «вырастает» пирамида (60 треугольных граней)
+function pentakisGeo(R) {
+  const d = new THREE.DodecahedronGeometry(R, 0).toNonIndexed();
+  const P = d.attributes.position;
+  const faces = [];
+  for (let k = 0; k + 2 < P.count; k += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(P, k);
+    const b = new THREE.Vector3().fromBufferAttribute(P, k + 1);
+    const c = new THREE.Vector3().fromBufferAttribute(P, k + 2);
+    const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize();
+    if (n.dot(a) < 0) n.negate();
+    let f = faces.find(F => F.n.dot(n) > 0.999);
+    if (!f) { f = { n, verts: [] }; faces.push(f); }
+    for (const v of [a, b, c]) if (!f.verts.some(w => w.distanceToSquared(v) < 1e-6)) f.verts.push(v);
+  }
+  const out = [];
+  for (const f of faces) {
+    const c = new THREE.Vector3();
+    f.verts.forEach(v => c.add(v));
+    c.divideScalar(f.verts.length);
+    const u = new THREE.Vector3().subVectors(f.verts[0], c).normalize();
+    const w = new THREE.Vector3().crossVectors(f.n, u);
+    const ang = v => Math.atan2(v.clone().sub(c).dot(w), v.clone().sub(c).dot(u));
+    const vs = f.verts.slice().sort((p, q) => ang(p) - ang(q));
+    const apex = c.clone().multiplyScalar(1.22);
+    for (let k = 0; k < vs.length; k++) {
+      const v0 = vs[k], v1 = vs[(k + 1) % vs.length];
+      // Обход против часовой стрелки снаружи, чтобы грани не были невидимыми изнутри
+      const tn = new THREE.Vector3().subVectors(v0, apex).cross(new THREE.Vector3().subVectors(v1, apex));
+      const [A, B] = tn.dot(c) < 0 ? [v1, v0] : [v0, v1];
+      out.push(apex.x, apex.y, apex.z, A.x, A.y, A.z, B.x, B.y, B.z);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  return g;
+}
+function polyGeo(kind, R) {
+  let g;
+  if (kind === 'tetra') g = new THREE.TetrahedronGeometry(R, 0);
+  else if (kind === 'cube') { const s = 2 * R / Math.sqrt(3); g = new THREE.BoxGeometry(s, s, s); }
+  else if (kind === 'octa') g = new THREE.OctahedronGeometry(R, 0);
+  else if (kind === 'dodeca') g = new THREE.DodecahedronGeometry(R, 0);
+  else if (kind === 'icosa') g = new THREE.IcosahedronGeometry(R, 0);
+  else return pentakisGeo(R);
+  g = g.toNonIndexed();
+  g.computeVertexNormals();
+  return g;
+}
+// Плоскости граней (нормаль наружу и расстояние от центра) – для столкновений
+function polyPlanes(geo) {
+  const P = geo.attributes.position, planes = [];
+  for (let k = 0; k + 2 < P.count; k += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(P, k);
+    const b = new THREE.Vector3().fromBufferAttribute(P, k + 1);
+    const c = new THREE.Vector3().fromBufferAttribute(P, k + 2);
+    const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize();
+    if (n.dot(a) < 0) n.negate();
+    planes.push({ n, d: n.dot(a) });
+  }
+  return planes;
+}
+for (const b of BODIES) if (b.poly) {
+  b.planes = polyPlanes(polyGeo(b.poly, b.size));
+  b.r = Math.min(...b.planes.map(pl => pl.d)); // внутренний радиус – для гравитации
+}
+// Касание с многогранником: ближайшая грань в системе тела и выталкивание на её нормаль
+function polyContact(i, p, t, support) {
+  const b = BODIES[i];
+  const c = bodyPos(i, t);
+  const q = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, t * b.spin);
+  const L = p.clone().sub(c).applyQuaternion(q.clone().invert());
+  let best = -Infinity, bk = -1;
+  for (let k = 0; k < b.planes.length; k++) {
+    const s = b.planes[k].n.dot(L) - b.planes[k].d;
+    if (s > best) { best = s; bk = k; }
+  }
+  const nw = b.planes[bk].n.clone().applyQuaternion(q);
+  const sup = support(nw);
+  if (best > sup) return null;
+  return { n: nw, push: nw.clone().multiplyScalar(sup - best) };
+}
+// Карта окружения для металлического блеска: строится один раз, когда рендерер готов
+let POLY_ENV = null;
+function makeEnv(renderer) {
+  const pm = new THREE.PMREMGenerator(renderer);
+  const s = new THREE.Scene();
+  const c = document.createElement('canvas'); c.width = 4; c.height = 256;
+  const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#f4f6fb'); gr.addColorStop(0.45, '#7a808c'); gr.addColorStop(0.55, '#2a2d35'); gr.addColorStop(1, '#0b0c10');
+  g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  s.add(new THREE.Mesh(new THREE.SphereGeometry(50, 32, 16), new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })));
+  // Два ярких «окна» в окружении – от них на гранях появляются блики, то есть видно металл
+  for (const [x, y, z] of [[30, 30, 20], [-35, 15, -25]]) {
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(24, 12), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+    panel.position.set(x, y, z); panel.lookAt(0, 0, 0);
+    s.add(panel);
+  }
+  const env = pm.fromScene(s, 0.04).texture;
+  pm.dispose();
+  return env;
+}
 function bodyPos(i, t) {
   if (BODIES[i].big) return BIG_C.clone();
   const b = BODIES[i], a = b.phase + 2 * Math.PI * t / b.period;
-  // Орбита в наклонной плоскости (e2 = (0, 0.8, 0.6)): спутники поднимаются над комнатой
-  return new THREE.Vector3(BIG_C.x + b.orbit * Math.cos(a), BIG_C.y + 0.8 * b.orbit * Math.sin(a), BIG_C.z + 0.6 * b.orbit * Math.sin(a));
+  // Орбита в наклонной плоскости: у спутников по умолчанию (0.8, 0.6), у обелисков – своя
+  const ty = b.ty ?? 0.8, tz = b.tz ?? 0.6;
+  return new THREE.Vector3(BIG_C.x + b.orbit * Math.cos(a), BIG_C.y + ty * b.orbit * Math.sin(a), BIG_C.z + tz * b.orbit * Math.sin(a));
 }
 AFRAME.registerComponent('orbit-body', {
   schema: { index: { type: 'int' } },
   init: function () {
     const b = BODIES[this.data.index];
+    if (b.poly) {
+      // Многогранник: тёмная металлическая грань и светящиеся рёбра (линии – дёшево для Quest)
+      const geo = polyGeo(b.poly, b.size);
+      this.body = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: b.face, metalness: 0.75, roughness: 0.3 }));
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 1), new THREE.LineBasicMaterial({ color: b.edge }));
+      const grp = new THREE.Group(); grp.add(this.body); grp.add(edges);
+      this.el.setObject3D('mesh', grp);
+      this.spin = b.spin;
+      return;
+    }
     // Полосы по широте (как у Юпитера) и одно пятно: без него вращения вокруг оси не видно
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
@@ -401,6 +533,12 @@ AFRAME.registerComponent('orbit-body', {
     const t = time / 1000;
     this.el.object3D.position.copy(bodyPos(this.data.index, t));
     this.el.object3D.rotation.y = t * this.spin;
+    if (this.body && !this.body.material.envMap && this.el.sceneEl.renderer) {
+      POLY_ENV = POLY_ENV || makeEnv(this.el.sceneEl.renderer);
+      this.body.material.envMap = POLY_ENV;
+      this.body.material.envMapIntensity = 2.2;
+      this.body.material.needsUpdate = true;
+    }
   }
 });
 // Пьедестал: открытый цилиндр под диском пола, нижний край спрятан внутри планеты (без верхней крышки)
@@ -422,6 +560,7 @@ AFRAME.registerComponent('jetpack-flight', {
     this.grounded = true;
     this.nearPlanet = false;
     this.carrier = -1;
+    this.surfN = new THREE.Vector3(0, 1, 0); // нормаль поверхности, на которой стоишь
     this.crashing = false;
     this.plane = document.querySelector('#crash-plane');
     this.nose = new THREE.Quaternion();
@@ -478,8 +617,14 @@ AFRAME.registerComponent('jetpack-flight', {
         this.angVel.set(-dz(this.ry) * maxRate, roll ? 0 : -dz(this.rx) * maxRate, roll ? -dz(this.rx) * maxRate : 0);
         if (!stick) {
           // Без стика нос сам выравнивается: сохраняем направление взгляда, убираем наклон и крен
+          // Нос выравнивается по поверхности под ногами: курс сохраняем, наклон и крен убираем
+          const n0 = this.grounded ? this.surfN : WORLD_UP;
           const f = new THREE.Vector3(0, 0, -1).applyQuaternion(this.nose);
-          const level = new THREE.Quaternion().setFromAxisAngle(WORLD_UP, Math.atan2(-f.x, -f.z));
+          f.addScaledVector(n0, -f.dot(n0));
+          if (f.lengthSq() < 1e-8) f.set(0, 0, -1);
+          f.normalize();
+          const rgt = new THREE.Vector3().crossVectors(f, n0).normalize();
+          const level = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(rgt, n0, f.clone().negate()));
           this.nose.slerp(level, Math.min(1, dt * 6));
         }
       } else {
@@ -502,8 +647,9 @@ AFRAME.registerComponent('jetpack-flight', {
     if (!vr) {
       // ПК: на полу WASD – ходьба по взгляду, в воздухе WASD – тяга, Shift/Ctrl – подъём и спуск
       const K = this.keys || {};
-      const f = fwdV.clone().setY(0); if (f.lengthSq() > 1e-8) f.normalize();
-      const r = rightV.clone().setY(0); if (r.lengthSq() > 1e-8) r.normalize();
+      const nUp = this.grounded ? this.surfN : WORLD_UP;
+      const f = fwdV.clone().addScaledVector(nUp, -fwdV.dot(nUp)); if (f.lengthSq() > 1e-8) f.normalize();
+      const r = rightV.clone().addScaledVector(nUp, -rightV.dot(nUp)); if (r.lengthSq() > 1e-8) r.normalize();
       if (this.grounded && !this.nearPlanet) {
         const w = new THREE.Vector3();
         if (K.KeyW) w.add(f);
@@ -541,7 +687,7 @@ AFRAME.registerComponent('jetpack-flight', {
       const fall = Math.pow(BODIES[i].r / (BODIES[i].r + h), 2);
       const fade = BODIES[i].big ? 1 : Math.pow(Math.max(0, 1 - h / 60), 2);
       acc.addScaledVector(dir, BODIES[i].g * fall * fade / dd);
-      if (h < 30 && !BODIES[i].big) this.nearPlanet = true; // у спутника ходить нельзя
+      if (h < 30 && BODIES[i].moon) this.nearPlanet = true; // у спутника ходить нельзя (планеты и обелиски – можно)
     }
     this.vel.addScaledVector(acc, dt);
     p.addScaledVector(this.vel, dt);
@@ -573,6 +719,11 @@ AFRAME.registerComponent('jetpack-flight', {
       touched = true;
     } else {
       for (let i = 0; i < BODIES.length; i++) {
+        if (BODIES[i].planes) {
+          const hit = polyContact(i, p, t, support);
+          if (hit) { n = hit.n; p.add(hit.push); touched = true; this.carrier = i; break; }
+          continue;
+        }
         const c = bodyPos(i, t);
         const dd = p.distanceTo(c);
         if (dd < 1e-6) continue;
@@ -588,8 +739,7 @@ AFRAME.registerComponent('jetpack-flight', {
     }
     this.grounded = touched;
     if (touched) {
-      // На полу трение: горизонтальную скорость гасим, чтобы не скользить
-      if (this.carrier < 0) { this.vel.x = 0; this.vel.z = 0; }
+      this.surfN.copy(n);
       // Скорость относительно поверхности: планета движется по орбите, поэтому сравниваем с её скоростью
       // Скорость точки поверхности = орбитальная скорость + вращение вокруг своей оси
       let vB = new THREE.Vector3();
@@ -604,10 +754,13 @@ AFRAME.registerComponent('jetpack-flight', {
         if (-rn > CRASH_SPEED) { this.crash(); return; }
         rel.addScaledVector(n, -rn);
       }
+      // Трение, как на полу: касательная скорость относительно поверхности гасится – прилипаешь к любой грани и планете
+      rel.copy(n).multiplyScalar(Math.max(rn, 0));
       this.vel.copy(vB).add(rel);
     }
 
-    // 5. Корпус корабля = нос. Голова смотрит внутри кабины. Автоматического выравнивания нет.
+    // 5. Корпус = нос. На поверхности «магнитные ботинки»: верх корабля совмещается с нормалью под ногами
+    if (touched) this.nose.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0).applyQuaternion(this.nose), n));
     rig.quaternion.copy(this.nose);
   },
   crash: function () {
