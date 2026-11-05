@@ -248,7 +248,7 @@ AFRAME.registerComponent('limit-radius', {
 </head>
 <body>
   <a-scene id="scene" background="color: #1c1d22"
-           renderer="antialias: true">
+           renderer="antialias: true" webxr="referenceSpaceType: local; optionalFeatures: local-floor">
 
     <!-- Освещение: холодный общий свет, тёплый над креслом, голубая подсветка сзади -->
     <a-light type="ambient" color="#8fa0c5" intensity="1.0"></a-light>
@@ -272,12 +272,15 @@ AFRAME.registerComponent('limit-radius', {
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
+    <a-entity id="ship" ship></a-entity>
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0.9 3.2">
-      <a-camera look-controls hud position="0 0.17 0" fov="70" near="0.1" far="3000">
-        <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
-      </a-camera>
+      <a-entity id="seat" position="0 0.7 0">
+        <a-camera look-controls hud position="0 0 0" fov="70" near="0.1" far="3000">
+          <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
+        </a-camera>
+      </a-entity>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
       <a-entity laser-controls="hand: right" id="right-hand"></a-entity>
     </a-entity>
@@ -328,7 +331,7 @@ AFRAME.registerComponent('thumbstick-movement', {
     if (x === 0 && y === 0) return;
     // В полёте ходьба отключена: управляет только ранец.
     const jet = document.querySelector('#player').components['jetpack-flight'];
-    if (jet && (!jet.grounded || jet.nearPlanet)) return;
+    if (jet && (jet.piloting || !jet.grounded || jet.nearPlanet)) return;
     const player = document.querySelector('#player');
     const camera = player.querySelector('[camera]');
     const direction = new THREE.Vector3(x, 0, y);
@@ -377,9 +380,9 @@ const BIG_C = new THREE.Vector3(0, -(BIG_R + PED), 0);
 const BODIES = [
   // Юпитер (большая планета), Сатурн, Нептун и Уран: полосы по широте, как у настоящих
   { big: true, r: BIG_R, bands: ['#c8a27a', '#e8d3b0', '#a8724a', '#d9b48a', '#8c5a3a', '#e2c49a'], spin: 0.04, g: 6.5, name: 'Юпитер' },
-  { moon: true, r: 28, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 3.0, name: 'Сатурн' },
-  { moon: true, r: 12, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 1.6, name: 'Нептун' },
-  { moon: true, r: 18, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 2.2, name: 'Уран' },
+  { moon: true, r: 45, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 3.0, name: 'Сатурн' },
+  { moon: true, r: 22, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 1.6, name: 'Нептун' },
+  { moon: true, r: 32, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 2.2, name: 'Уран' },
   // Платоновы тела и пентакисдодекаэдр: огромные обелиски (радиус 60 м) на орбитах 450–600 м, светятся рёбрами.
   // Куб – чёрный с красными рёбрами, остальные – тёмные с голубыми рёбрами. Блеск – от карты окружения.
   { poly: 'tetra', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 450, phase: 0.0, period: 260, spin: 0.05, g: 2.5, name: 'Тетраэдр', ty: 0.95, tz: 0.3 },
@@ -584,7 +587,7 @@ AFRAME.registerComponent('jetpack-flight', {
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
   },
   tick: function (time, delta) {
-    if (this.crashing) return;
+    if (this.crashing || this.piloting) return;
     const dt = Math.min(delta / 1000, 0.05);
     const p = this.el.object3D.position;
     const rig = this.el.object3D;
@@ -918,6 +921,302 @@ AFRAME.registerComponent('hud', {
   }
 });
 document.querySelector('#player').setAttribute('jetpack-flight', '');
+</script>
+
+<script>
+// ===== Корабль: жёсткое тело на четырёх ножках с боковыми двигателями =====
+// Модель строится в координатах корпуса (начало – центр корпуса, нос – в сторону -Z, верх – +Y).
+// Центр масс смещён вниз, поэтому корабль садится устойчиво, но при боковом сносе может завалиться.
+const SHIP_COM = new THREE.Vector3(0, -0.3, 0);
+const SHIP_INERTIA = [1.6, 2.1, 1.7];                 // момент инерции по осям корпуса (масса = 1)
+const SHIP_START = new THREE.Vector3(12, 1.4, 6);      // центр масс на старте (на полу комнаты)
+const SHIP_EYE = new THREE.Vector3(0, 0.35, -0.3);     // глаза пилота в координатах корпуса (сидит выше, чем ходит)
+const SHIP_EXIT = new THREE.Vector3(2.6, -0.65, 0.2);  // куда встаёт герой при выходе (справа от корабля)
+const SHIP_PTS = (() => {
+  const a = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.25, -1.3, sz * 1.15, 0.3, 0]);        // опоры (тип 0)
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.1, sy * 0.8, sz * 1.3, 0.08, 1]); // углы корпуса
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) a.push([sx * 1.45, -0.1, sz * 0.5, 0.4, 1]);          // двигатели
+  a.push([0, 0.8, 0, 0.08, 1], [1.1, 0, 0, 0.08, 1], [-1.1, 0, 0, 0.08, 1]);
+  return a;
+})();
+const SHIP_PAD_CRASH = 12, SHIP_HULL_CRASH = 7, SHIP_MU = 1.0;
+
+function buildShipModel() {
+  const g = new THREE.Group();
+  const M = (c, m, r, o) => new THREE.MeshStandardMaterial(Object.assign({ color: c, metalness: m, roughness: r }, o || {}));
+  const hullM = M('#b4bcc9', 0.1, 0.55), darkM = M('#3a3f4a', 0.1, 0.6), accM = M('#ff7a1a', 0.1, 0.5), inM = M('#4a4f5c', 0.1, 0.7);
+  const glowM = new THREE.MeshBasicMaterial({ color: '#18e0ff' });
+  const box = (w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; };
+  const rod = (ax, ay, az, bx, by, bz, r, mat) => {
+    const A = new THREE.Vector3(ax, ay, az), B = new THREE.Vector3(bx, by, bz);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, A.distanceTo(B), 10), mat);
+    m.position.copy(A).add(B).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(AXIS_Y, B.clone().sub(A).normalize());
+    m.castShadow = true; g.add(m); return m;
+  };
+  const T = 0.08;
+  // Корпус-кабина: панели с оконным проёмом спереди
+  box(2.2, T, 2.6, 0, -0.8, 0, inM);
+  box(2.2, T, 2.6, 0, 0.8, 0, hullM);
+  box(2.2, 1.6, T, 0, 0, 1.3, hullM);
+  box(T, 1.6, 2.6, -1.1, 0, 0, hullM);
+  box(T, 1.6, 2.6, 1.1, 0, 0, hullM);
+  box(2.2, 0.8, T, 0, -0.4, -1.3, hullM);
+  box(0.02, 0.14, 2.64, -1.12, 0, 0, accM); box(0.02, 0.14, 2.64, 1.12, 0, 0, accM); box(2.24, 0.14, 0.02, 0, 0, 1.32, accM); // оранжевый пояс снаружи
+  // Лобовое стекло и стойки
+  box(2.1, 0.76, 0.03, 0, 0.4, -1.3, M('#7fe6ff', 0.1, 0.1, { transparent: true, opacity: 0.18 }));
+  box(0.06, 0.8, 0.06, -1.07, 0.4, -1.3, darkM); box(0.06, 0.8, 0.06, 1.07, 0.4, -1.3, darkM); box(0.06, 0.8, 0.06, 0, 0.4, -1.3, darkM);
+  // Кабина изнутри: кресло, приборная панель
+  box(0.7, 0.12, 0.7, 0, -0.35, 0.15, darkM);        // сиденье
+  box(0.7, 0.8, 0.12, 0, 0.0, 0.5, darkM);           // спинка
+  box(1.8, 0.35, 0.5, 0, -0.45, -1.0, darkM);        // панель
+  box(1.4, 0.04, 0.3, 0, -0.26, -1.02, glowM);       // светящийся экран
+  // Ножки и опоры
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    rod(sx * 0.9, -0.8, sz * 1.0, sx * 1.25, -1.55, sz * 1.15, 0.07, darkM);
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.08, 20), hullM);
+    pad.position.set(sx * 1.25, -1.57, sz * 1.15); pad.castShadow = true; g.add(pad);
+  }
+  // Боковые двигатели: корпус, сопло сзади, оранжевая полоса, крепление к кабине
+  for (const sx of [-1, 1]) {
+    const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.5, 20), hullM);
+    pod.rotation.x = Math.PI / 2; pod.position.set(sx * 1.45, -0.1, 0); pod.castShadow = true; g.add(pod);
+    const nz = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 0.25, 20), darkM);
+    nz.rotation.x = Math.PI / 2; nz.position.set(sx * 1.45, -0.1, 0.85); g.add(nz);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), accM);
+    cap.rotation.x = -Math.PI / 2; cap.position.set(sx * 1.45, -0.1, -0.75); g.add(cap);
+    box(0.4, 0.12, 0.5, sx * 1.25, -0.1, 0.0, darkM);
+  }
+  return g;
+}
+
+AFRAME.registerComponent('ship', {
+  init: function () {
+    this.pos = SHIP_START.clone();
+    this.q = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, 0.6);
+    this.vel = new THREE.Vector3(); this.w = new THREE.Vector3();
+    this.piloting = false; this.prevE = false; this.retHold = 0; this.accelMag = 0;
+    this.prevVel = new THREE.Vector3(); this.nContacts = 0;
+    this.group = buildShipModel();
+    this.el.setObject3D('mesh', this.group);
+    this.cache = [];
+  },
+  // Кэш положений и скоростей тел на этот кадр
+  prepare: function (t) {
+    for (let i = 0; i < BODIES.length; i++) {
+      const c = bodyPos(i, t), c0 = bodyPos(i, t - 0.02);
+      const q = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, t * BODIES[i].spin);
+      this.cache[i] = { c, v: c.clone().sub(c0).multiplyScalar(50), q, qi: q.clone().invert() };
+    }
+  },
+  gravity: function (p, out) {
+    out.set(0, 0, 0);
+    for (let i = 0; i < BODIES.length; i++) {
+      const B = BODIES[i], dir = this.cache[i].c.clone().sub(p), dd = dir.length();
+      const h = Math.max(dd - B.r, 0.01);
+      const fall = Math.pow(B.r / (B.r + h), 2);
+      const fade = B.big ? 1 : Math.pow(Math.max(0, 1 - h / 60), 2);
+      out.addScaledVector(dir, B.g * fall * fade / dd);
+    }
+    return out;
+  },
+  // Ближайшая поверхность к шару радиуса rad в точке pw: глубина вдавливания, нормаль, скорость поверхности
+  surface: function (pw, rad) {
+    let best = null;
+    if (Math.hypot(pw.x, pw.z) <= CAP_A && pw.y - rad < 0 && pw.y > -3) best = { d: rad - pw.y, n: WORLD_UP, vB: ZERO_V };
+    for (let i = 0; i < BODIES.length; i++) {
+      const B = BODIES[i], C = this.cache[i];
+      const dd = pw.distanceTo(C.c);
+      let d, n;
+      if (B.planes) {
+        if (dd > B.size * 1.6 + rad) continue;
+        const L = pw.clone().sub(C.c).applyQuaternion(C.qi);
+        let bs = -Infinity, bk = -1;
+        for (let k = 0; k < B.planes.length; k++) { const s = B.planes[k].n.dot(L) - B.planes[k].d; if (s > bs) { bs = s; bk = k; } }
+        if (bs >= rad) continue;
+        d = rad - bs; n = B.planes[bk].n.clone().applyQuaternion(C.q);
+      } else {
+        if (dd > B.r + rad) continue;
+        d = B.r + rad - dd; n = pw.clone().sub(C.c).multiplyScalar(1 / Math.max(dd, 1e-6));
+      }
+      if (!best || d > best.d) {
+        const vB = C.v.clone().add(new THREE.Vector3(0, B.spin, 0).cross(pw.clone().sub(C.c)));
+        best = { d, n, vB };
+      }
+    }
+    return best;
+  },
+  iw: function (v, out) {
+    out.copy(v).applyQuaternion(this.qi);
+    out.x /= SHIP_INERTIA[0]; out.y /= SHIP_INERTIA[1]; out.z /= SHIP_INERTIA[2];
+    return out.applyQuaternion(this.q);
+  },
+  substep: function (h, thrustW, jf) {
+    const g = this.gravity(this.pos, new THREE.Vector3());
+    this.vel.addScaledVector(g, h).addScaledVector(thrustW, h);
+    this.pos.addScaledVector(this.vel, h);
+    const wl = this.w.length();
+    if (wl > 1e-6) this.q.premultiply(new THREE.Quaternion().setFromAxisAngle(this.w.clone().multiplyScalar(1 / wl), wl * h)).normalize();
+    this.qi = this.q.clone().invert();
+    // Контакты
+    const cons = [];
+    const R = new THREE.Vector3();
+    for (const P of SHIP_PTS) {
+      const r = new THREE.Vector3(P[0], P[1], P[2]).sub(SHIP_COM).applyQuaternion(this.q);
+      const pw = this.pos.clone().add(r);
+      const S = this.surface(pw, P[3]);
+      if (S && S.d > 0) cons.push({ r, n: S.n, d: S.d, vB: S.vB, kind: P[4] });
+    }
+    this.nContacts = cons.length;
+    const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
+    // Подготовка: скорости удара до любых импульсов (иначе первая опора получает весь отскок и корабль кувыркается)
+    for (const c of cons) {
+      const v0 = this.vel.clone().add(tmp.copy(this.w).cross(c.r)).sub(c.vB);
+      const vn0 = v0.dot(c.n);
+      c.acc = 0;
+      c.bias = vn0 < -STICK_SPEED ? -RESTITUTION * vn0 : 0;
+      if (-vn0 > (c.kind === 0 ? SHIP_PAD_CRASH : SHIP_HULL_CRASH)) this.crashFlag = true;
+      c.rn = new THREE.Vector3().crossVectors(c.r, c.n);
+      c.kn = 1 + tmp2.crossVectors(this.iw(c.rn, tmp), c.r).dot(c.n);
+    }
+    for (let it = 0; it < 8; it++) {
+      for (const c of cons) {
+        const v = this.vel.clone().add(tmp.copy(this.w).cross(c.r)).sub(c.vB);
+        const vn = v.dot(c.n);
+        let dj = (c.bias - vn) / c.kn;
+        const nacc = Math.max(0, c.acc + dj);
+        dj = nacc - c.acc; c.acc = nacc;
+        if (dj !== 0) { this.vel.addScaledVector(c.n, dj); this.w.addScaledVector(this.iw(c.rn, tmp), dj); }
+        // Трение Кулона: предел – мю на накопленную нормальную силу
+        const v2 = this.vel.clone().add(tmp.copy(this.w).cross(c.r)).sub(c.vB);
+        const vt = v2.addScaledVector(c.n, -v2.dot(c.n));
+        const vtl = vt.length();
+        if (vtl > 1e-5) {
+          const tdir = vt.multiplyScalar(1 / vtl);
+          const rt = new THREE.Vector3().crossVectors(c.r, tdir);
+          const kt = 1 + tmp2.crossVectors(this.iw(rt, tmp), c.r).dot(tdir);
+          const room = Math.max(0, SHIP_MU * c.acc - (c.fric || 0));
+          const jt = Math.min(vtl / kt, room);
+          c.fric = (c.fric || 0) + jt;
+          this.vel.addScaledVector(tdir, -jt);
+          this.w.addScaledVector(this.iw(rt, tmp), -jt);
+        }
+      }
+    }
+    // Выталкивание из поверхности
+    for (const c of cons) {
+      const push = Math.max(c.d - 0.003, 0) * 0.7;
+      if (push > 0) { this.pos.addScaledVector(c.n, push); for (const c2 of cons) c2.d -= push * c.n.dot(c2.n); }
+    }
+    if (cons.length) this.w.multiplyScalar(Math.max(0, 1 - 1.2 * h));
+  },
+  reset: function () {
+    this.pos.copy(SHIP_START); this.q.setFromAxisAngle(AXIS_Y, 0.6);
+    this.vel.set(0, 0, 0); this.w.set(0, 0, 0); this.crashFlag = false; this.retHold = 0;
+  },
+  enter: function (jf) {
+    this.piloting = true; jf.piloting = true;
+    document.querySelector('#seat').object3D.position.copy(SHIP_EYE).sub(SHIP_COM);
+    jf.vel.copy(this.vel);
+  },
+  exit: function (jf) {
+    this.piloting = false; jf.piloting = false;
+    document.querySelector('#seat').object3D.position.set(0, 0.7, 0);
+    const p = jf.el.object3D.position;
+    p.copy(this.pos).add(SHIP_EXIT.clone().sub(SHIP_COM).applyQuaternion(this.q));
+    jf.vel.copy(this.vel); jf.nose.copy(this.q); jf.angVel.set(0, 0, 0); jf.grounded = false;
+    jf.thr.fill(0);
+  },
+  tick: function (time, delta) {
+    const jf = document.querySelector('#player').components['jetpack-flight'];
+    if (!jf || !jf.nose) return;
+    if (jf.crashing && this.piloting) return;
+    const dt = Math.min(delta / 1000, 0.05), t = time / 1000;
+    this.prepare(t);
+    const vr = this.el.sceneEl.is('vr-mode'), K = jf.keys || {};
+    // Вход и выход: ПК – E, VR – правая кнопка A
+    let eBtn = !!K.KeyE;
+    if (vr && navigator.getGamepads) for (const gp of navigator.getGamepads()) if (gp && gp.hand === 'right' && gp.buttons[4] && gp.buttons[4].pressed) eBtn = true;
+    if (eBtn && !this.prevE) {
+      if (this.piloting) this.exit(jf);
+      else if (jf.el.object3D.position.distanceTo(this.pos) < 3.6) this.enter(jf);
+    }
+    this.prevE = eBtn;
+
+    // Управление кораблём
+    const thr = jf.thr || (jf.thr = [0, 0, 0, 0, 0, 0]);
+    const thrustW = new THREE.Vector3();
+    if (this.piloting) {
+      thr.fill(0);
+      const dz = v => (Math.abs(v) > 0.15 ? v : 0);
+      const THM = THRUST_MAIN, THS = THRUST_SIDE;
+      let tr = jf.thrusting ? 1 : 0, tl = jf.lift ? 1 : 0, roll = false;
+      let lx = jf.lx, ly = jf.ly, rx = jf.rx, ry = jf.ry, retBtn = !!K.KeyR;
+      if (vr && navigator.getGamepads) for (const gp of navigator.getGamepads()) {
+        if (!gp) continue;
+        if (gp.hand === 'right' && gp.buttons[0]) tr = gp.buttons[0].value;
+        if (gp.hand === 'left') { if (gp.buttons[0]) tl = gp.buttons[0].value; if (gp.buttons[1]) roll = gp.buttons[1].pressed; if (gp.buttons[5] && gp.buttons[5].pressed) retBtn = true; }
+      }
+      const loc = new THREE.Vector3();   // тяга в осях корпуса
+      if (!vr) {
+        tr = K.Space ? 1 : 0; tl = (K.ShiftLeft || K.ShiftRight) ? 1 : 0;
+        lx = (K.KeyD ? 1 : 0) - (K.KeyA ? 1 : 0); ly = (K.KeyS ? 1 : 0) - (K.KeyW ? 1 : 0);
+        rx = (K.ArrowRight ? 1 : 0) - (K.ArrowLeft ? 1 : 0); ry = (K.ArrowDown ? 1 : 0) - (K.ArrowUp ? 1 : 0);
+        roll = false;
+      }
+      if (tr > 0.05) { loc.y += tr * THM; thr[0] = tr; }
+      if (tl > 0.05) { loc.y -= tl * THS; thr[1] = tl; }
+      const sx = dz(lx), sy = -dz(ly);
+      loc.x += sx * THS; loc.z -= sy * (sy > 0 ? THM : THS);
+      if (sx > 0) thr[2] = sx; else thr[3] = -sx;
+      if (sy > 0) thr[4] = sy; else thr[5] = -sy;
+      thrustW.copy(loc).applyQuaternion(this.q);
+      // Вращение: ускорение по осям корпуса, предел скорости 1.5 рад/с
+      const maxRate = 1.5, acc = 2.5 * dt;
+      const wl = this.w.clone().applyQuaternion(this.q.clone().invert());
+      wl.multiplyScalar(Math.max(0, 1 - 0.35 * dt));
+      const clampA = v => Math.max(-maxRate, Math.min(maxRate, v));
+      wl.x = clampA(wl.x - dz(ry) * acc);
+      if (!vr) {
+        wl.z = clampA(wl.z + ((K.KeyQ ? 1 : 0) - (K.KeyC ? 1 : 0)) * acc);
+      } else if (roll) wl.z = clampA(wl.z - dz(rx) * acc);
+      if (!(vr && roll)) wl.y = clampA(wl.y - dz(rx) * acc);
+      this.w.copy(wl).applyQuaternion(this.q);
+      // Возврат корабля на старт: удержание R / левая Y
+      this.retHold = retBtn ? Math.min(RETURN_HOLD, this.retHold + dt) : Math.max(0, this.retHold - dt * 2);
+      jf.retHold = this.retHold;
+      jf.setFade(Math.pow(this.retHold / RETURN_HOLD, 2) * 0.95);
+      if (this.retHold >= RETURN_HOLD) { this.reset(); jf.setFade(0); }
+    }
+
+    // Физика: несколько подшагов
+    const N = Math.max(1, Math.ceil(dt / 0.006));
+    this.crashFlag = false;
+    for (let s = 0; s < N; s++) this.substep(dt / N, thrustW, jf);
+    if (this.crashFlag) {
+      this.crashCount = (this.crashCount || 0) + 1;
+      if (this.piloting) {
+        jf.crashing = true; jf.setFade(1);
+        setTimeout(() => { this.reset(); this.exit(jf); jf.resetToStart(); jf.setFade(0); jf.crashing = false; }, 700);
+      } else this.reset();
+    }
+
+    // Показываем корабль
+    this.group.quaternion.copy(this.q);
+    this.group.position.copy(this.pos).sub(SHIP_COM.clone().applyQuaternion(this.q));
+    if (this.piloting) {
+      const rig = jf.el.object3D;
+      rig.position.copy(this.pos); rig.quaternion.copy(this.q);
+      jf.vel.copy(this.vel); jf.surfN.set(0, 1, 0);
+      const aNow = this.nContacts ? 0 : this.vel.distanceTo(this.prevVel) / Math.max(dt, 1e-4);
+      this.accelMag += (aNow - this.accelMag) * Math.min(1, dt * 6);
+      jf.accelMag = this.accelMag;
+    }
+    this.prevVel.copy(this.vel);
+  }
+});
+const ZERO_V = new THREE.Vector3();
 </script>
 
 <script>
