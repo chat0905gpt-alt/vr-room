@@ -273,6 +273,7 @@ AFRAME.registerComponent('limit-radius', {
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
     <a-entity id="ship" ship></a-entity>
+    <a-entity id="gunnery" gunnery></a-entity>
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0.9 3.2">
@@ -387,12 +388,12 @@ const BODIES = [
   { moon: true, r: 32, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 2.2, name: 'Уран' },
   // Платоновы тела и пентакисдодекаэдр: огромные обелиски (радиус 60 м) на орбитах 450–600 м, светятся рёбрами.
   // Куб – чёрный с красными рёбрами, остальные – тёмные с голубыми рёбрами. Блеск – от карты окружения.
-  { poly: 'tetra', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 450, phase: 0.0, period: 260, spin: 0.05, g: 2.5, name: 'Тетраэдр', ty: 0.95, tz: 0.3 },
+  { poly: 'tetra', size: 60, edge: '#b8743a', face: '#4a4f5a', orbit: 450, phase: 0.0, period: 260, spin: 0.05, g: 2.5, name: 'Тетраэдр', ty: 0.95, tz: 0.3 },
   { poly: 'cube', size: 60, edge: '#ff2a2a', face: '#33363f', orbit: 520, phase: 2.1, period: 300, spin: -0.04, g: 2.5, name: 'Куб', ty: 0.6, tz: 0.8 },
-  { poly: 'octa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 580, phase: 4.2, period: 340, spin: 0.06, g: 2.5, name: 'Октаэдр', ty: 0.85, tz: -0.5 },
-  { poly: 'dodeca', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 600, phase: 1.0, period: 380, spin: -0.05, g: 2.5, name: 'Додекаэдр', ty: 0.4, tz: 0.9 },
-  { poly: 'icosa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 460, phase: 3.1, period: 420, spin: 0.03, g: 2.5, name: 'Икосаэдр', ty: 0.7, tz: -0.7 },
-  { poly: 'pentakis', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 560, phase: 5.0, period: 460, spin: -0.03, g: 2.5, name: 'Пентакисдодекаэдр', ty: 0.2, tz: 0.98 }
+  { poly: 'octa', size: 60, edge: '#b8743a', face: '#4a4f5a', orbit: 580, phase: 4.2, period: 340, spin: 0.06, g: 2.5, name: 'Октаэдр', ty: 0.85, tz: -0.5 },
+  { poly: 'dodeca', size: 60, edge: '#b8743a', face: '#4a4f5a', orbit: 600, phase: 1.0, period: 380, spin: -0.05, g: 2.5, name: 'Додекаэдр', ty: 0.4, tz: 0.9 },
+  { poly: 'icosa', size: 60, edge: '#b8743a', face: '#4a4f5a', orbit: 460, phase: 3.1, period: 420, spin: 0.03, g: 2.5, name: 'Икосаэдр', ty: 0.7, tz: -0.7 },
+  { poly: 'pentakis', size: 60, edge: '#b8743a', face: '#4a4f5a', orbit: 560, phase: 5.0, period: 460, spin: -0.03, g: 2.5, name: 'Пентакисдодекаэдр', ty: 0.2, tz: 0.98 }
 ];
 const AXIS_Y = new THREE.Vector3(0, 1, 0);
 // Пентакисдодекаэдр: на каждой грани додекаэдра «вырастает» пирамида (60 треугольных граней)
@@ -514,7 +515,7 @@ AFRAME.registerComponent('orbit-body', {
       // Многогранник: тёмная металлическая грань и светящиеся рёбра (линии – дёшево для Quest)
       const geo = polyGeo(b.poly, b.size);
       this.body = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: b.face, metalness: 0.75, roughness: 0.3 }));
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 1), new THREE.LineBasicMaterial({ color: b.edge }));
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 1), new THREE.LineBasicMaterial({ color: b.edge, transparent: true, opacity: b.poly === 'cube' ? 0.9 : 0.4 }));
       const grp = new THREE.Group(); grp.add(this.body); grp.add(edges);
       this.el.setObject3D('mesh', grp);
       this.spin = b.spin;
@@ -563,15 +564,15 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 // Кнопки Quest: в WebXR контроллеры не попадают в navigator.getGamepads(), поэтому читаем геймпад из компонента контроллера
 // и дублируем событиями A-Frame (abuttondown, ybuttondown, gripdown).
 function readPads(jf) {
-  const o = { tr: null, tl: null, roll: !!jf.pad.roll, A: !!jf.pad.A, Y: !!jf.pad.Y };
+  const o = { tr: null, tl: null, roll: !!jf.pad.roll, A: !!jf.pad.A, B: !!jf.pad.B, X: !!jf.pad.X, Y: !!jf.pad.Y };
   const g = el => { const c = el && (el.components['tracked-controls'] || el.components['tracked-controls-webxr']); return c && c.controller && c.controller.gamepad; };
   const R = g(jf.rightEl), L = g(jf.leftEl);
-  if (R && R.buttons) { if (R.buttons[0]) o.tr = R.buttons[0].value; if (R.buttons[4] && R.buttons[4].pressed) o.A = true; }
-  if (L && L.buttons) { if (L.buttons[0]) o.tl = L.buttons[0].value; if (L.buttons[1] && L.buttons[1].pressed) o.roll = true; if (L.buttons[5] && L.buttons[5].pressed) o.Y = true; }
+  if (R && R.buttons) { if (R.buttons[0]) o.tr = R.buttons[0].value; if (R.buttons[4] && R.buttons[4].pressed) o.A = true; if (R.buttons[5] && R.buttons[5].pressed) o.B = true; }
+  if (L && L.buttons) { if (L.buttons[0]) o.tl = L.buttons[0].value; if (L.buttons[1] && L.buttons[1].pressed) o.roll = true; if (L.buttons[4] && L.buttons[4].pressed) o.X = true; if (L.buttons[5] && L.buttons[5].pressed) o.Y = true; }
   if (navigator.getGamepads) for (const gp of navigator.getGamepads()) {
     if (!gp) continue;
-    if (gp.hand === 'right' && gp.buttons[4] && gp.buttons[4].pressed) o.A = true;
-    if (gp.hand === 'left' && gp.buttons[5] && gp.buttons[5].pressed) o.Y = true;
+    if (gp.hand === 'right') { if (gp.buttons[4] && gp.buttons[4].pressed) o.A = true; if (gp.buttons[5] && gp.buttons[5].pressed) o.B = true; }
+    if (gp.hand === 'left') { if (gp.buttons[4] && gp.buttons[4].pressed) o.X = true; if (gp.buttons[5] && gp.buttons[5].pressed) o.Y = true; }
   }
   jf.padShown = o;
   return o;
@@ -599,8 +600,12 @@ AFRAME.registerComponent('jetpack-flight', {
     this.rightEl = hand; this.leftEl = left; this.pad = {};
     hand.addEventListener('abuttondown', () => { this.pad.A = true; });
     hand.addEventListener('abuttonup', () => { this.pad.A = false; });
+    hand.addEventListener('bbuttondown', () => { this.pad.B = true; });
+    hand.addEventListener('bbuttonup', () => { this.pad.B = false; });
     left.addEventListener('ybuttondown', () => { this.pad.Y = true; });
     left.addEventListener('ybuttonup', () => { this.pad.Y = false; });
+    left.addEventListener('xbuttondown', () => { this.pad.X = true; });
+    left.addEventListener('xbuttonup', () => { this.pad.X = false; });
     left.addEventListener('gripdown', () => { this.pad.roll = true; });
     left.addEventListener('gripup', () => { this.pad.roll = false; });
     left.addEventListener('triggerdown', () => { this.lift = true; });
@@ -610,6 +615,9 @@ AFRAME.registerComponent('jetpack-flight', {
     this.keys = {};
     window.addEventListener('keydown', e => { this.keys[e.code] = true; });
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
+    // Мышь (ПК): левая кнопка – стрельба
+    window.addEventListener('mousedown', e => { if (e.button === 0) this.keys.Mouse = true; });
+    window.addEventListener('mouseup', e => { if (e.button === 0) this.keys.Mouse = false; });
   },
   tick: function (time, delta) {
     if (this.crashing || this.piloting) return;
@@ -853,11 +861,16 @@ AFRAME.registerComponent('hud', {
     this.cv.width = 512; this.cv.height = 210;
     this.ctx = this.cv.getContext('2d');
     this.tex = new THREE.CanvasTexture(this.cv);
-    const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthTest: false, depthWrite: false });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55 * 210 / 512), mat);
-    this.mesh.position.set(-0.36, -0.28, -1.5);
+    const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, opacity: 0.72, depthTest: false, depthWrite: false });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.36 * 210 / 512), mat);
+    this.mesh.position.set(-0.14, -0.2, -1.3);
     this.mesh.renderOrder = 999;
     this.el.object3D.add(this.mesh);
+    // Прицел: кольцо и точка в центре взгляда
+    const cm = new THREE.MeshBasicMaterial({ color: '#e8f6ff', transparent: true, opacity: 0.85, depthTest: false, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.0035, 0.0055, 28), cm); ring.position.set(0, 0, -1); ring.renderOrder = 1000;
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.0009, 8), cm); dot.position.set(0, 0, -1); dot.renderOrder = 1000;
+    this.el.object3D.add(ring); this.el.object3D.add(dot);
     this.acc = 0;
   },
   nearest: function (jf, t) {
@@ -899,29 +912,29 @@ AFRAME.registerComponent('hud', {
     const room = jf.vel.length();
     const c = this.ctx;
     c.clearRect(0, 0, 512, 210);
-    c.fillStyle = 'rgba(4,10,20,0.55)';
+    c.fillStyle = 'rgba(4,10,20,0.32)';
     c.fillRect(0, 0, 512, 210);
-    c.strokeStyle = '#18e0ff'; c.lineWidth = 1.5; c.strokeRect(1, 1, 510, 208);
-    c.fillStyle = '#18e0ff'; c.font = 'bold 20px sans-serif';
+    c.strokeStyle = '#5fb4c8'; c.lineWidth = 1.5; c.strokeRect(1, 1, 510, 208);
+    c.fillStyle = '#5fb4c8'; c.font = 'bold 15px sans-serif';
     c.fillText('СКОРОСТЬ', 16, 34);
-    c.fillStyle = '#fff'; c.font = 'bold 54px sans-serif';
+    c.fillStyle = '#e8f0f6'; c.font = 'bold 30px sans-serif';
     c.fillText(speed.toFixed(1), 16, 92);
-    c.font = '20px sans-serif'; c.fillStyle = '#9fb4c8';
+    c.font = '15px sans-serif'; c.fillStyle = '#9fb4c8';
     c.fillText('м/с отн. ' + nb.name, 16, 118);
-    c.fillStyle = '#18e0ff'; c.font = 'bold 20px sans-serif';
+    c.fillStyle = '#5fb4c8'; c.font = 'bold 15px sans-serif';
     c.fillText('УСКОРЕНИЕ', 16, 156);
-    c.fillStyle = '#fff'; c.font = 'bold 40px sans-serif';
+    c.fillStyle = '#e8f0f6'; c.font = 'bold 30px sans-serif';
     c.fillText((jf.accelMag || 0).toFixed(1), 16, 198);
-    c.font = '20px sans-serif'; c.fillStyle = '#9fb4c8';
+    c.font = '15px sans-serif'; c.fillStyle = '#9fb4c8';
     c.fillText('м/с²', 110, 198);
     // Схемы сопел: вид сзади (вверх, вниз, вправо, влево) и вид сбоку (вперёд, назад).
     // Пламя вылетает в сторону, противоположную тяге.
     const th = jf.thr || [0, 0, 0, 0, 0, 0];
     const fx = 330, fy = 95, sx = 440, sy = 95;
-    c.fillStyle = '#1b2433'; c.strokeStyle = '#18e0ff'; c.lineWidth = 1;
+    c.fillStyle = '#1b2433'; c.strokeStyle = '#5fb4c8'; c.lineWidth = 1;
     c.fillRect(fx - 22, fy - 22, 44, 44); c.strokeRect(fx - 22, fy - 22, 44, 44);
     c.fillRect(sx - 28, sy - 16, 56, 32); c.strokeRect(sx - 28, sy - 16, 56, 32);
-    c.fillStyle = '#18e0ff'; c.fillRect(sx + 28, sy - 6, 8, 12); // нос
+    c.fillStyle = '#5fb4c8'; c.fillRect(sx + 28, sy - 6, 8, 12); // нос
     this.flame(c, fx, fy + 22, 0, 1, th[0]);   // тяга вверх – пламя снизу
     this.flame(c, fx, fy - 22, 0, -1, th[1]);  // тяга вниз – пламя сверху
     this.flame(c, fx - 22, fy, -1, 0, th[2]);  // тяга вправо – пламя слева
@@ -930,12 +943,13 @@ AFRAME.registerComponent('hud', {
     this.flame(c, sx + 28, sy, 1, 0, th[5]);   // тяга назад – пламя спереди (у носа)
     // Возврат: короткая подпись и состояние кнопок для проверки (A – сесть, Y – возврат), светятся только нажатые
     const hold = jf.retHold || 0;
-    c.fillStyle = hold > 0 ? '#ff8a1e' : '#6f8296'; c.font = '16px sans-serif';
+    c.fillStyle = hold > 0 ? '#ff8a1e' : '#6f8296'; c.font = '13px sans-serif';
     c.fillText(hold > 0 ? 'ВОЗВРАТ ' + (RETURN_HOLD - hold).toFixed(1) + ' с' : 'Возврат: держать 2 с (Y / R)', 250, 190);
     const ps = jf.padShown || {};
-    c.font = 'bold 16px sans-serif';
-    c.fillStyle = ps.A ? '#18e0ff' : '#2a3544'; c.fillText('A', 470, 30);
-    c.fillStyle = ps.Y ? '#18e0ff' : '#2a3544'; c.fillText('Y', 490, 30);
+    c.font = 'bold 13px sans-serif';
+    c.fillStyle = (ps.A || ps.X) ? '#5fb4c8' : '#2a3544'; c.fillText('A/X', 420, 30);
+    c.fillStyle = ps.B ? '#5fb4c8' : '#2a3544'; c.fillText('B', 478, 30);
+    c.fillStyle = ps.Y ? '#5fb4c8' : '#2a3544'; c.fillText('Y', 500, 30);
     this.tex.needsUpdate = true;
   }
 });
@@ -981,11 +995,11 @@ function buildShipModel() {
   box(2.2, 1.6, T, 0, 0, 1.3, hullM);
   box(T, 1.6, 2.6, -1.1, 0, 0, hullM);
   box(T, 1.6, 2.6, 1.1, 0, 0, hullM);
-  box(2.2, 0.8, T, 0, -0.4, -1.3, hullM);
   box(0.02, 0.14, 2.64, -1.12, 0, 0, accM); box(0.02, 0.14, 2.64, 1.12, 0, 0, accM); box(2.24, 0.14, 0.02, 0, 0, 1.32, accM); // оранжевый пояс снаружи
   // Лобовое стекло и стойки
-  box(2.1, 0.76, 0.03, 0, 0.4, -1.3, M('#7fe6ff', 0.1, 0.1, { transparent: true, opacity: 0.18 }));
-  box(0.06, 0.8, 0.06, -1.07, 0.4, -1.3, darkM); box(0.06, 0.8, 0.06, 1.07, 0.4, -1.3, darkM); box(0.06, 0.8, 0.06, 0, 0.4, -1.3, darkM);
+  // Передняя часть – целиком стекло, без стоек: как в кабине Ми-8 и батискафе
+  const glassM = new THREE.MeshStandardMaterial({ color: '#9fe8ff', metalness: 0, roughness: 0.05, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide });
+  box(2.2, 1.6, 0.02, 0, 0, -1.3, glassM).castShadow = false;
   // Кабина изнутри: кресло, приборная панель
   box(0.7, 0.12, 0.7, 0, -0.35, 0.15, darkM);        // сиденье
   box(0.7, 0.8, 0.12, 0, 0.0, 0.5, darkM);           // спинка
@@ -1023,7 +1037,7 @@ AFRAME.registerComponent('ship', {
     const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
     const cx = cv.getContext('2d'); cx.fillStyle = 'rgba(4,10,20,0.6)'; cx.fillRect(0, 0, 256, 64);
     cx.strokeStyle = '#18e0ff'; cx.lineWidth = 2; cx.strokeRect(1, 1, 254, 62);
-    cx.fillStyle = '#fff'; cx.font = 'bold 28px sans-serif'; cx.textAlign = 'center'; cx.fillText('A / E – сесть', 128, 42);
+    cx.fillStyle = '#fff'; cx.font = 'bold 28px sans-serif'; cx.textAlign = 'center'; cx.fillText('B / E – сесть', 128, 42);
     this.hint = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true }));
     this.hint.scale.set(1.6, 0.4, 1); this.hint.renderOrder = 998; this.hint.visible = false;
     this.el.sceneEl.object3D.add(this.hint);
@@ -1164,7 +1178,7 @@ AFRAME.registerComponent('ship', {
     // Вход и выход: ПК – E, VR – правая кнопка A
     let eBtn = !!K.KeyE;
     const pads = readPads(jf);
-    if (vr && pads.A) eBtn = true;
+    if (pads.B) eBtn = true;
     if (eBtn && !this.prevE) {
       if (this.piloting) this.exit(jf);
       else if (jf.el.object3D.position.distanceTo(this.pos) < 3.6) this.enter(jf);
@@ -1248,6 +1262,137 @@ AFRAME.registerComponent('ship', {
   }
 });
 const ZERO_V = new THREE.Vector3();
+</script>
+
+<script>
+// ===== Стрельба: пули с физикой (их тянет гравитация планет), мишени на кубе, которые разлетаются на обломки =====
+const BULLET_SPEED = 150, BULLET_LIFE = 6, FIRE_COOLDOWN = 0.14, RESPAWN_DELAY = 10; // мишень возвращается через 10 с после разрушения
+const CUBE_I = BODIES.findIndex(b => b.poly === 'cube');
+const TARGET_HS = 2;
+const TARGET_LAYOUT = [];
+for (const x of [-1, 0, 1]) for (const z of [-1, 0, 1]) TARGET_LAYOUT.push([x * 6, z * 6]);
+// Гравитация всех тел в точке p (та же формула, что у корабля и героя)
+function gravAt(p, t, out) {
+  out.set(0, 0, 0);
+  for (let i = 0; i < BODIES.length; i++) {
+    const B = BODIES[i], dir = bodyPos(i, t).sub(p), dd = dir.length();
+    const h = Math.max(dd - B.r, 0.01);
+    const fall = Math.pow(B.r / (B.r + h), 2);
+    const fade = B.big ? 1 : Math.pow(Math.max(0, 1 - h / 60), 2);
+    out.addScaledVector(dir, B.g * fall * fade / dd);
+  }
+  return out;
+}
+// Внутри какого тела точка: индекс тела, -2 – пол комнаты, -1 – снаружи
+function insideBody(p, t) {
+  if (Math.hypot(p.x, p.z) <= CAP_A && p.y <= 0) return -2;
+  for (let i = 0; i < BODIES.length; i++) {
+    const B = BODIES[i], c = bodyPos(i, t);
+    if (B.planes) {
+      const q = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, t * B.spin);
+      const L = p.clone().sub(c).applyQuaternion(q.invert());
+      let mx = -Infinity;
+      for (const pl of B.planes) { const s = pl.n.dot(L) - pl.d; if (s > mx) mx = s; }
+      if (mx < 0) return i;
+    } else if (p.distanceTo(c) < B.r) return i;
+  }
+  return -1;
+}
+AFRAME.registerComponent('gunnery', {
+  init: function () {
+    this.scene = this.el.sceneEl.object3D;
+    this.bullets = []; this.debris = []; this.cd = 0; this.tgt = [];
+    const geo = new THREE.BoxGeometry(TARGET_HS * 2, TARGET_HS * 2, TARGET_HS * 2);
+    const mat = new THREE.MeshStandardMaterial({ color: '#e0893a', metalness: 0.3, roughness: 0.45, emissive: '#3a1a00', emissiveIntensity: 0.6 });
+    for (const L of TARGET_LAYOUT) {
+      const local = new THREE.Vector3(L[0], BODIES[CUBE_I].r + TARGET_HS, L[1]);
+      const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = true; this.scene.add(mesh);
+      this.tgt.push({ local, mesh, alive: true, world: new THREE.Vector3() });
+    }
+    this.bulletGeo = new THREE.SphereGeometry(0.07, 8, 6);
+    this.bulletMat = new THREE.MeshBasicMaterial({ color: '#ffb347' });
+    this.debrisGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+    this.debrisMat = new THREE.MeshStandardMaterial({ color: '#e0893a', emissive: '#3a1a00', emissiveIntensity: 0.5 });
+    this.cubeC = new THREE.Vector3(); this.cubeQi = new THREE.Quaternion();
+  },
+  placeTargets: function (t) {
+    const c = bodyPos(CUBE_I, t);
+    const q = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, t * BODIES[CUBE_I].spin);
+    for (const T of this.tgt) {
+      T.world.copy(T.local).applyQuaternion(q).add(c);
+      T.mesh.position.copy(T.world); T.mesh.quaternion.copy(q);
+    }
+    this.cubeC.copy(c); this.cubeQi.copy(q).invert();
+  },
+  spawn: function (o, d, base) {
+    const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMat);
+    mesh.position.copy(o); this.scene.add(mesh);
+    this.bullets.push({ p: o.clone(), v: d.clone().normalize().multiplyScalar(BULLET_SPEED).add(base), age: 0, mesh });
+  },
+  burst: function (pos, n, power) {
+    for (let k = 0; k < n; k++) {
+      const m = new THREE.Mesh(this.debrisGeo, this.debrisMat);
+      m.scale.setScalar(0.25 + Math.random() * 0.5);
+      m.position.copy(pos); this.scene.add(m);
+      const v = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.2, Math.random() - 0.5).normalize().multiplyScalar((3 + Math.random() * 7) * power);
+      this.debris.push({ mesh: m, v, age: 0, w: (Math.random() - 0.5) * 8 });
+    }
+  },
+  destroy: function (T, t) {
+    T.alive = false; T.downAt = t; T.mesh.visible = false;
+    this.burst(T.world, 14, 1);
+  },
+  hitTest: function (p, t) {
+    const L = p.clone().sub(this.cubeC).applyQuaternion(this.cubeQi);
+    for (const T of this.tgt) {
+      if (T.alive && Math.abs(L.x - T.local.x) < TARGET_HS && Math.abs(L.y - T.local.y) < TARGET_HS && Math.abs(L.z - T.local.z) < TARGET_HS) {
+        this.destroy(T, t); return true;
+      }
+    }
+    return insideBody(p, t) !== -1;
+  },
+  tick: function (time, delta) {
+    const jf = document.querySelector('#player').components['jetpack-flight'];
+    if (!jf || !jf.pad) return;
+    const dt = Math.min(delta / 1000, 0.05), t = time / 1000;
+    this.placeTargets(t);
+    // Огонь: правая A, левая X, на ПК – левая кнопка мыши
+    const pads = readPads(jf);
+    const fire = pads.A || pads.X || !!(jf.keys && jf.keys.Mouse);
+    this.cd = Math.max(0, this.cd - dt);
+    if (fire && this.cd <= 0) {
+      this.cd = FIRE_COOLDOWN;
+      const cam = document.querySelector('#player [camera]').object3D;
+      const o = new THREE.Vector3(), d = new THREE.Vector3();
+      cam.getWorldPosition(o); cam.getWorldDirection(d);
+      this.spawn(o.addScaledVector(d, 0.6), d, jf.vel.clone());
+    }
+    // Пули: несколько подшагов, чтобы не проскочить тонкие мишени
+    const SUB = 4, h = dt / SUB, g = new THREE.Vector3();
+    for (let i = this.bullets.length - 1; i >= 0; i--) {
+      const b = this.bullets[i]; let dead = false;
+      for (let s = 0; s < SUB && !dead; s++) {
+        b.p.addScaledVector(b.v, h);
+        gravAt(b.p, t, g); b.v.addScaledVector(g, h);
+        if (this.hitTest(b.p, t)) { dead = true; this.burst(b.p, 3, 0.3); }
+      }
+      b.age += dt;
+      if (b.age > BULLET_LIFE || b.p.lengthSq() > 1e8) dead = true;
+      b.mesh.position.copy(b.p);
+      if (dead) { this.scene.remove(b.mesh); this.bullets.splice(i, 1); }
+    }
+    // Обломки падают и исчезают через 4 с или при касании тела
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const d = this.debris[i]; d.age += dt;
+      gravAt(d.mesh.position, t, g); d.v.addScaledVector(g, dt);
+      d.mesh.position.addScaledVector(d.v, dt);
+      d.mesh.rotation.x += d.w * dt; d.mesh.rotation.y += d.w * dt * 0.7;
+      if (d.age > 4 || insideBody(d.mesh.position, t) !== -1) { this.scene.remove(d.mesh); this.debris.splice(i, 1); }
+    }
+    // Каждая мишень возвращается сама через RESPAWN_DELAY секунд после разрушения
+    for (const T of this.tgt) if (!T.alive && t - T.downAt > RESPAWN_DELAY) { T.alive = true; T.mesh.visible = true; }
+  }
+});
 </script>
 
 <script>
