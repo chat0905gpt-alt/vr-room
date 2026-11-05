@@ -235,6 +235,7 @@ AFRAME.registerComponent('limit-radius', {
 
     <a-entity void-sky></a-entity>
     <a-entity grid-floor></a-entity>
+    <a-entity pedestal></a-entity>
     <a-entity orbit-body="index: 0"></a-entity>
     <a-entity orbit-body="index: 1"></a-entity>
     <a-entity orbit-body="index: 2"></a-entity>
@@ -245,7 +246,7 @@ AFRAME.registerComponent('limit-radius', {
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0.9 3.2">
-      <a-camera look-controls position="0 0.17 0" fov="70">
+      <a-camera look-controls position="0 0.17 0" fov="70" near="0.1" far="3000">
         <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
       </a-camera>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
@@ -334,10 +335,11 @@ AFRAME.registerComponent('snap-turn', {
 const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 10, START = { x: 0, y: 0.9, z: 3.2 };
 // Половины размеров тела: квадрат 0.5 × 0.5 м в основании и 1.8 м в высоту
 const BOX = { x: 0.25, y: 0.9, z: 0.25 };
-// Большая планета: шар радиусом 120 м, срезанный сверху на уровне пола. Срез радиусом 40 м – это пол комнаты.
+// Большая планета: целый шар радиусом 120 м. Верх шара на PED метров ниже пола комнаты, а пол – диск радиусом 40 м
+// на цилиндрическом пьедестале, который уходит в планету. Поверхности не совпадают, поэтому мерцания нет.
 // Три спутника вращаются вокруг её центра по наклонным орбитам и проходят над комнатой.
-const CAP_A = 40, BIG_R = 120;
-const BIG_C = new THREE.Vector3(0, -Math.sqrt(BIG_R * BIG_R - CAP_A * CAP_A), 0);
+const CAP_A = 40, BIG_R = 120, PED = 3;
+const BIG_C = new THREE.Vector3(0, -(BIG_R + PED), 0);
 const BODIES = [
   // Юпитер (большая планета), Сатурн, Нептун и Уран: полосы по широте, как у настоящих
   { big: true, r: BIG_R, bands: ['#c8a27a', '#e8d3b0', '#a8724a', '#d9b48a', '#8c5a3a', '#e2c49a'], spin: 0.04, g: 4.5 },
@@ -366,11 +368,6 @@ AFRAME.registerComponent('orbit-body', {
     else { g.fillStyle = 'rgba(255,255,255,0.15)'; g.beginPath(); g.ellipse(180, 60, 10, 4, 0, 0, Math.PI * 2); g.fill(); }
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
     const geo = new THREE.SphereGeometry(b.r, 48, 32);
-    if (b.big) { // срез сверху: вершины выше уровня пола прижимаем к нему
-      const pos = geo.attributes.position, lim = -BIG_C.y;
-      for (let k = 0; k < pos.count; k++) if (pos.getY(k) > lim) pos.setY(k, lim);
-      pos.needsUpdate = true; geo.computeVertexNormals();
-    }
     const mesh = new THREE.Mesh(geo,
       new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, fog: false }));
     mesh.castShadow = !b.big;
@@ -381,6 +378,16 @@ AFRAME.registerComponent('orbit-body', {
     const t = time / 1000;
     this.el.object3D.position.copy(bodyPos(this.data.index, t));
     this.el.object3D.rotation.y = t * this.spin;
+  }
+});
+// Пьедестал: открытый цилиндр под диском пола, нижний край спрятан внутри планеты (без верхней крышки)
+AFRAME.registerComponent('pedestal', {
+  init: function () {
+    const H = 20.05;
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(CAP_A, CAP_A, H, 96, 1, true),
+      new THREE.MeshStandardMaterial({ color: '#16171c', roughness: 0.9, metalness: 0.1, side: THREE.DoubleSide, fog: false }));
+    mesh.position.y = 0.05 - H / 2;
+    this.el.setObject3D('mesh', mesh);
   }
 });
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -523,15 +530,26 @@ AFRAME.registerComponent('jetpack-flight', {
     let n = null, touched = false;
     this.carrier = -1;
     const sFloor = support(WORLD_UP);
-    const rH = Math.hypot(p.x, p.z);
+    let rH = Math.hypot(p.x, p.z);
+    // Стенка пьедестала: снаружи ниже уровня пола не пускает внутрь; удар сильнее порога – авария
+    const rH0 = Math.hypot(p.x - this.vel.x * dt, p.z - this.vel.z * dt);
+    const WR = 0.35;
+    if (rH0 > CAP_A && rH < CAP_A + WR && p.y < sFloor - 0.05 && p.y > -30) {
+      const vr = (this.vel.x * p.x + this.vel.z * p.z) / Math.max(rH, 1e-6);
+      const k = (CAP_A + WR) / Math.max(rH, 1e-6);
+      p.x *= k; p.z *= k; rH = CAP_A + WR;
+      if (vr < 0) {
+        if (-vr > CRASH_SPEED) { this.crash(); return; }
+        this.vel.x -= vr * p.x / rH; this.vel.z -= vr * p.z / rH;
+      }
+    }
     if (rH <= CAP_A && p.y <= sFloor) {
-      // Пол комнаты – плоский срез большой планеты
+      // Пол комнаты – диск на пьедестале
       n = WORLD_UP.clone();
       p.y = sFloor;
       touched = true;
     } else {
       for (let i = 0; i < BODIES.length; i++) {
-        if (BODIES[i].big && rH <= CAP_A) continue; // над срезом большая планета не мешает
         const c = bodyPos(i, t);
         const dd = p.distanceTo(c);
         if (dd < 1e-6) continue;
