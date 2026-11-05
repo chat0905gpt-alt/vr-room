@@ -82,7 +82,7 @@ AFRAME.registerComponent('instance-glb', {
 
 // Пол: тёмная сетка, исчезающая в тумане.
 AFRAME.registerComponent('grid-floor', {
-  schema: { radius: {default: 90}, cell: {default: 5} },
+  schema: { radius: {default: 40}, cell: {default: 5} },
   init: function () {
     const size = 512, cells = 5, c = document.createElement('canvas');
     c.width = c.height = size;
@@ -106,6 +106,7 @@ AFRAME.registerComponent('grid-floor', {
       new THREE.MeshStandardMaterial({map: tex, roughness: 1, metalness: 0}));
     mesh.rotation.x = -Math.PI / 2;
     mesh.receiveShadow = true;
+    mesh.position.y = 0.01; // чуть выше среза планеты, чтобы не мерцало
     this.el.setObject3D('mesh', mesh);
   }
 });
@@ -250,6 +251,7 @@ AFRAME.registerComponent('limit-radius', {
     <a-entity orbit-body="index: 0"></a-entity>
     <a-entity orbit-body="index: 1"></a-entity>
     <a-entity orbit-body="index: 2"></a-entity>
+    <a-entity orbit-body="index: 3"></a-entity>
 
     <!-- Предметы галереи создаются из списка GALLERY выше -->
     <a-entity id="gallery"></a-entity>
@@ -345,16 +347,21 @@ AFRAME.registerComponent('snap-turn', {
 const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 10, START = { x: 0, y: 0.9, z: 3.2 };
 // Половины размеров тела: квадрат 0.5 × 0.5 м в основании и 1.8 м в высоту
 const BOX = { x: 0.25, y: 0.9, z: 0.25 };
-// Три планеты на орбитах вокруг невидимого центра SUN (солнце – это направленный свет).
-const SUN = new THREE.Vector3(0, 30, -75);
+// Большая планета: шар радиусом 120 м, срезанный сверху на уровне пола. Срез радиусом 40 м – это пол комнаты.
+// Три спутника вращаются вокруг её центра по наклонным орбитам и проходят над комнатой.
+const CAP_A = 40, BIG_R = 120;
+const BIG_C = new THREE.Vector3(0, -Math.sqrt(BIG_R * BIG_R - CAP_A * CAP_A), 0);
 const BODIES = [
-  { r: 28, color: '#6e5d52', orbit: 45, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
-  { r: 12, color: '#8a6a4c', orbit: 65, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
-  { r: 18, color: '#4f5a66', orbit: 85, phase: 4.0, period: 320, spin: -0.35, g: 4.5 }
+  { big: true, r: BIG_R, color: '#5a4a3e', spin: 0, g: 4.5 },
+  { r: 28, color: '#6e5d52', orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
+  { r: 12, color: '#8a6a4c', orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
+  { r: 18, color: '#4f5a66', orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 4.5 }
 ];
 function bodyPos(i, t) {
+  if (BODIES[i].big) return BIG_C.clone();
   const b = BODIES[i], a = b.phase + 2 * Math.PI * t / b.period;
-  return new THREE.Vector3(SUN.x + b.orbit * Math.cos(a), SUN.y, SUN.z + b.orbit * Math.sin(a));
+  // Орбита в наклонной плоскости (e2 = (0, 0.8, 0.6)): спутники поднимаются над комнатой
+  return new THREE.Vector3(BIG_C.x + b.orbit * Math.cos(a), BIG_C.y + 0.8 * b.orbit * Math.sin(a), BIG_C.z + 0.6 * b.orbit * Math.sin(a));
 }
 AFRAME.registerComponent('orbit-body', {
   schema: { index: { type: 'int' } },
@@ -369,10 +376,15 @@ AFRAME.registerComponent('orbit-body', {
       g.fillRect(x, 0, 2 + (x * 13) % 5, 128);
     }
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(b.r, 48, 32),
+    const geo = new THREE.SphereGeometry(b.r, 48, 32);
+    if (b.big) { // срез сверху: вершины выше уровня пола прижимаем к нему
+      const pos = geo.attributes.position, lim = -BIG_C.y;
+      for (let k = 0; k < pos.count; k++) if (pos.getY(k) > lim) pos.setY(k, lim);
+      pos.needsUpdate = true; geo.computeVertexNormals();
+    }
+    const mesh = new THREE.Mesh(geo,
       new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, fog: false }));
-    mesh.castShadow = true;
+    mesh.castShadow = !b.big;
     this.el.setObject3D('mesh', mesh);
     this.spin = b.spin;
   },
@@ -473,11 +485,10 @@ AFRAME.registerComponent('jetpack-flight', {
       const dd = dir.length();
       const h = Math.max(dd - BODIES[i].r, 0.01);
       const fall = Math.pow(BODIES[i].r / (BODIES[i].r + h), 2);
-      const fade = Math.pow(Math.max(0, 1 - h / 60), 2);
+      const fade = BODIES[i].big ? 1 : Math.pow(Math.max(0, 1 - h / 60), 2);
       acc.addScaledVector(dir, BODIES[i].g * fall * fade / dd);
-      if (h < 30) this.nearPlanet = true;
+      if (h < 30 && !BODIES[i].big) this.nearPlanet = true; // у спутника ходить нельзя
     }
-    acc.y -= GRAVITY * Math.max(0, 1 - p.y / 25);
     this.vel.addScaledVector(acc, dt);
     p.addScaledVector(this.vel, dt);
 
@@ -487,24 +498,28 @@ AFRAME.registerComponent('jetpack-flight', {
     const support = nw => { const nl = nw.clone().applyQuaternion(invNose); return BOX.x * Math.abs(nl.x) + BOX.y * Math.abs(nl.y) + BOX.z * Math.abs(nl.z); };
     let n = null, touched = false;
     this.carrier = -1;
-    for (let i = 0; i < BODIES.length; i++) {
-      const c = bodyPos(i, t);
-      const dd = p.distanceTo(c);
-      if (dd < 1e-6) continue;
-      const nn = p.clone().sub(c).multiplyScalar(1 / dd);
-      const s = support(nn);
-      if (dd <= BODIES[i].r + s) {
-        n = nn;
-        p.copy(c).addScaledVector(n, BODIES[i].r + s);
-        touched = true; this.carrier = i;
-        break;
-      }
-    }
     const sFloor = support(WORLD_UP);
-    if (!touched && !this.nearPlanet && p.y <= sFloor) {
+    const rH = Math.hypot(p.x, p.z);
+    if (rH <= CAP_A && p.y <= sFloor) {
+      // Пол комнаты – плоский срез большой планеты
       n = WORLD_UP.clone();
       p.y = sFloor;
       touched = true;
+    } else {
+      for (let i = 0; i < BODIES.length; i++) {
+        if (BODIES[i].big && rH <= CAP_A) continue; // над срезом большая планета не мешает
+        const c = bodyPos(i, t);
+        const dd = p.distanceTo(c);
+        if (dd < 1e-6) continue;
+        const nn = p.clone().sub(c).multiplyScalar(1 / dd);
+        const s = support(nn);
+        if (dd <= BODIES[i].r + s) {
+          n = nn;
+          p.copy(c).addScaledVector(n, BODIES[i].r + s);
+          touched = true; this.carrier = i;
+          break;
+        }
+      }
     }
     this.grounded = touched;
     if (touched) {
