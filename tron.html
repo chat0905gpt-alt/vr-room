@@ -275,7 +275,7 @@ AFRAME.registerComponent('limit-radius', {
 
     <!-- Игрок и VR-камера -->
     <a-entity id="player" position="0 0.9 3.2">
-      <a-camera look-controls position="0 0.17 0" fov="70" near="0.1" far="3000">
+      <a-camera look-controls hud position="0 0.17 0" fov="70" near="0.1" far="3000">
         <a-plane id="crash-plane" position="0 0 -0.3" width="4" height="3" material="color: #000; opacity: 0; transparent: true; depthTest: false"></a-plane>
       </a-camera>
       <a-entity laser-controls="hand: left" id="left-hand"></a-entity>
@@ -363,7 +363,10 @@ AFRAME.registerComponent('snap-turn', {
 
 // Ранец: гравитация, инерция, тяга по взгляду (как посадочный модуль).
 // Тяга: триггер правой руки (на ПК – пробел). Посадка мягкая до 6 м/с, быстрее – разбивается и возвращает на старт.
-const GRAVITY = 4.5, THRUST = 9, CRASH_SPEED = 10, START = { x: 0, y: 0.9, z: 3.2 };
+// Касание: до STICK_SPEED – мягкая посадка (прилипаешь), от STICK_SPEED до CRASH_SPEED – отскок, выше – авария.
+// Тяга: основные сопла (вверх и вперёд) сильнее, боковые/задние/нижние слабее.
+const THRUST_MAIN = 11, THRUST_SIDE = 6, CRASH_SPEED = 12, STICK_SPEED = 3, RESTITUTION = 0.4, RETURN_HOLD = 2;
+const START = { x: 0, y: 0.9, z: 3.2 };
 // Половины размеров тела: квадрат 0.5 × 0.5 м в основании и 1.8 м в высоту
 const BOX = { x: 0.25, y: 0.9, z: 0.25 };
 // Большая планета: целый шар радиусом 120 м. Верх шара на PED метров ниже пола комнаты, а пол – диск радиусом 40 м
@@ -373,18 +376,18 @@ const CAP_A = 40, BIG_R = 120, PED = 3;
 const BIG_C = new THREE.Vector3(0, -(BIG_R + PED), 0);
 const BODIES = [
   // Юпитер (большая планета), Сатурн, Нептун и Уран: полосы по широте, как у настоящих
-  { big: true, r: BIG_R, bands: ['#c8a27a', '#e8d3b0', '#a8724a', '#d9b48a', '#8c5a3a', '#e2c49a'], spin: 0.04, g: 4.5 },
-  { moon: true, r: 28, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 4.5 },
-  { moon: true, r: 12, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 4.5 },
-  { moon: true, r: 18, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 4.5 },
+  { big: true, r: BIG_R, bands: ['#c8a27a', '#e8d3b0', '#a8724a', '#d9b48a', '#8c5a3a', '#e2c49a'], spin: 0.04, g: 6.5, name: 'Юпитер' },
+  { moon: true, r: 28, bands: ['#e3cf9c', '#f0e2bc', '#d8c08a'], orbit: 200, phase: 2.2, period: 150, spin: 0.25, g: 3.0, name: 'Сатурн' },
+  { moon: true, r: 12, bands: ['#3f6fb0', '#5a8ad0', '#2d55a0'], orbit: 250, phase: 0.6, period: 220, spin: 0.5, g: 1.6, name: 'Нептун' },
+  { moon: true, r: 18, bands: ['#9ad6dc', '#b4e3e6', '#86c5cc'], orbit: 300, phase: 4.0, period: 320, spin: -0.35, g: 2.2, name: 'Уран' },
   // Платоновы тела и пентакисдодекаэдр: огромные обелиски (радиус 60 м) на орбитах 450–600 м, светятся рёбрами.
   // Куб – чёрный с красными рёбрами, остальные – тёмные с голубыми рёбрами. Блеск – от карты окружения.
-  { poly: 'tetra', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 450, phase: 0.0, period: 260, spin: 0.05, g: 2, ty: 0.95, tz: 0.3 },
-  { poly: 'cube', size: 60, edge: '#ff2a2a', face: '#33363f', orbit: 520, phase: 2.1, period: 300, spin: -0.04, g: 2, ty: 0.6, tz: 0.8 },
-  { poly: 'octa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 580, phase: 4.2, period: 340, spin: 0.06, g: 2, ty: 0.85, tz: -0.5 },
-  { poly: 'dodeca', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 600, phase: 1.0, period: 380, spin: -0.05, g: 2, ty: 0.4, tz: 0.9 },
-  { poly: 'icosa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 460, phase: 3.1, period: 420, spin: 0.03, g: 2, ty: 0.7, tz: -0.7 },
-  { poly: 'pentakis', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 560, phase: 5.0, period: 460, spin: -0.03, g: 2, ty: 0.2, tz: 0.98 }
+  { poly: 'tetra', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 450, phase: 0.0, period: 260, spin: 0.05, g: 2.5, name: 'Тетраэдр', ty: 0.95, tz: 0.3 },
+  { poly: 'cube', size: 60, edge: '#ff2a2a', face: '#33363f', orbit: 520, phase: 2.1, period: 300, spin: -0.04, g: 2.5, name: 'Куб', ty: 0.6, tz: 0.8 },
+  { poly: 'octa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 580, phase: 4.2, period: 340, spin: 0.06, g: 2.5, name: 'Октаэдр', ty: 0.85, tz: -0.5 },
+  { poly: 'dodeca', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 600, phase: 1.0, period: 380, spin: -0.05, g: 2.5, name: 'Додекаэдр', ty: 0.4, tz: 0.9 },
+  { poly: 'icosa', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 460, phase: 3.1, period: 420, spin: 0.03, g: 2.5, name: 'Икосаэдр', ty: 0.7, tz: -0.7 },
+  { poly: 'pentakis', size: 60, edge: '#18e0ff', face: '#5b6578', orbit: 560, phase: 5.0, period: 460, spin: -0.03, g: 2.5, name: 'Пентакисдодекаэдр', ty: 0.2, tz: 0.98 }
 ];
 const AXIS_Y = new THREE.Vector3(0, 1, 0);
 // Пентакисдодекаэдр: на каждой грани додекаэдра «вырастает» пирамида (60 треугольных граней)
@@ -643,7 +646,10 @@ AFRAME.registerComponent('jetpack-flight', {
     const fwdV = new THREE.Vector3(0, 0, -1).applyQuaternion(aim);
     const rightV = new THREE.Vector3(1, 0, 0).applyQuaternion(aim);
     const upV = new THREE.Vector3(0, 1, 0).applyQuaternion(aim);
-    const TH = THRUST * dt;
+    const THM = THRUST_MAIN * dt, THS = THRUST_SIDE * dt;
+    // Доли тяги по соплам для индикатора: [вверх, вниз, вправо, влево, вперёд, назад] (0..1)
+    const thr = this.thr || (this.thr = [0, 0, 0, 0, 0, 0]);
+    thr.fill(0);
     if (!vr) {
       // ПК: на полу WASD – ходьба по взгляду, в воздухе WASD – тяга, Shift/Ctrl – подъём и спуск
       const K = this.keys || {};
@@ -659,21 +665,35 @@ AFRAME.registerComponent('jetpack-flight', {
         if (w.lengthSq() > 0) p.addScaledVector(w.normalize(), 1.5 * dt);
       }
       if (!this.grounded) {
-        if (K.KeyW) this.vel.addScaledVector(fwdV, TH);
-        if (K.KeyS) this.vel.addScaledVector(fwdV, -TH);
-        if (K.KeyD) this.vel.addScaledVector(rightV, TH);
-        if (K.KeyA) this.vel.addScaledVector(rightV, -TH);
+        if (K.KeyW) { this.vel.addScaledVector(fwdV, THM); thr[4] = 1; }
+        if (K.KeyS) { this.vel.addScaledVector(fwdV, -THS); thr[5] = 1; }
+        if (K.KeyD) { this.vel.addScaledVector(rightV, THS); thr[2] = 1; }
+        if (K.KeyA) { this.vel.addScaledVector(rightV, -THS); thr[3] = 1; }
       }
-      if (K.Space) { this.vel.addScaledVector(upV, TH); this.grounded = false; }
-      if (K.ShiftLeft || K.ShiftRight) { this.vel.addScaledVector(upV, -TH); this.grounded = false; }
+      if (K.Space) { this.vel.addScaledVector(upV, THM); this.grounded = false; thr[0] = 1; }
+      if (K.ShiftLeft || K.ShiftRight) { this.vel.addScaledVector(upV, -THS); this.grounded = false; thr[1] = 1; }
     }
     if (vr) {
-      if (tr > 0.05) { this.vel.addScaledVector(upV, tr * TH); this.grounded = false; }
-      if (tl > 0.05) { this.vel.addScaledVector(upV, -tl * TH); this.grounded = false; }
+      if (tr > 0.05) { this.vel.addScaledVector(upV, tr * THM); this.grounded = false; thr[0] = tr; }
+      if (tl > 0.05) { this.vel.addScaledVector(upV, -tl * THS); this.grounded = false; thr[1] = tl; }
       if (!this.grounded && (dz(this.lx) || dz(this.ly))) {
-        this.vel.addScaledVector(rightV, dz(this.lx) * TH);
-        this.vel.addScaledVector(fwdV, -dz(this.ly) * TH);
+        const sx = dz(this.lx), sy = -dz(this.ly);
+        this.vel.addScaledVector(rightV, sx * THS);
+        this.vel.addScaledVector(fwdV, sy * (sy > 0 ? THM : THS));
+        if (sx > 0) thr[2] = sx; else thr[3] = -sx;
+        if (sy > 0) thr[4] = sy; else thr[5] = -sy;
       }
+    }
+    // Пульт возврата: удерживать RETURN_HOLD секунд (ПК – R, VR – левая кнопка Y)
+    let retBtn = !!(this.keys && this.keys.KeyR);
+    if (vr && navigator.getGamepads) {
+      for (const gp of navigator.getGamepads()) if (gp && gp.hand === 'left' && gp.buttons[5] && gp.buttons[5].pressed) retBtn = true;
+    }
+    this.retHold = retBtn ? Math.min(RETURN_HOLD, (this.retHold || 0) + dt) : Math.max(0, (this.retHold || 0) - dt * 2);
+    if (this.retHold >= RETURN_HOLD) { this.returnHome(); return; }
+    if (this.retHold > 0 || this.fadeOn) {
+      const m = this.plane.getObject3D('mesh');
+      if (m) { m.material.opacity = Math.pow(this.retHold / RETURN_HOLD, 2) * 0.95; this.fadeOn = this.retHold > 0; }
     }
 
     // 3. Гравитация: сумма притяжений всех планет по закону обратных квадратов, плавно гаснущих к 60 м;
@@ -750,31 +770,151 @@ AFRAME.registerComponent('jetpack-flight', {
       }
       const rel = this.vel.clone().sub(vB);
       const rn = rel.dot(n);
-      if (rn < 0) {
-        if (-rn > CRASH_SPEED) { this.crash(); return; }
-        rel.addScaledVector(n, -rn);
+      const impact = Math.max(-rn, 0);
+      if (impact > CRASH_SPEED) { this.crash(); return; }
+      const relT = rel.clone().addScaledVector(n, -rn); // касательная составляющая
+      if (impact > STICK_SPEED) {
+        // Отскок: нормальная скорость меняет знак с потерями, касательная частично гасится трением
+        relT.multiplyScalar(0.85);
+        rel.copy(relT).addScaledVector(n, impact * RESTITUTION);
+        this.grounded = false;
+        this.lastBounce = t;
+      } else {
+        // Мягкая посадка: прилипаешь, скольжение быстро гасится трением
+        const k = relT.length() < 1 ? 0 : Math.max(0, 1 - 6 * dt);
+        rel.copy(relT).multiplyScalar(k).addScaledVector(n, Math.max(rn, 0));
       }
-      // Трение, как на полу: касательная скорость относительно поверхности гасится – прилипаешь к любой грани и планете
-      rel.copy(n).multiplyScalar(Math.max(rn, 0));
       this.vel.copy(vB).add(rel);
     }
 
     // 5. Корпус = нос. На поверхности «магнитные ботинки»: верх корабля совмещается с нормалью под ногами
     if (touched) this.nose.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0).applyQuaternion(this.nose), n));
     rig.quaternion.copy(this.nose);
+
+    // 6. Ускорение для прибора: изменение скорости за кадр без учёта ударов о поверхность, сглаженное
+    if (!this.prevVel) this.prevVel = this.vel.clone();
+    const aNow = touched ? 0 : this.vel.distanceTo(this.prevVel) / Math.max(dt, 1e-4);
+    this.accelMag = (this.accelMag || 0) + (aNow - (this.accelMag || 0)) * Math.min(1, dt * 6);
+    this.prevVel.copy(this.vel);
   },
   crash: function () {
     this.crashing = true;
     this.thrusting = false;
     this.vel.set(0, 0, 0);
-    this.plane.setAttribute('material', 'opacity', 1);
-    setTimeout(() => {
-      this.el.object3D.position.set(START.x, START.y, START.z);
-      this.grounded = true;
-      this.carrier = -1;
-      this.plane.setAttribute('material', 'opacity', 0);
-      this.crashing = false;
-    }, 700);
+    this.setFade(1);
+    setTimeout(() => { this.resetToStart(); this.setFade(0); this.crashing = false; }, 700);
+  },
+  setFade: function (v) {
+    const m = this.plane.getObject3D('mesh');
+    if (m) m.material.opacity = v;
+  },
+  resetToStart: function () {
+    this.el.object3D.position.set(START.x, START.y, START.z);
+    this.vel.set(0, 0, 0);
+    this.nose.identity();
+    this.angVel.set(0, 0, 0);
+    this.grounded = true;
+    this.carrier = -1;
+    this.surfN.set(0, 1, 0);
+    this.retHold = 0;
+    this.fadeOn = false;
+  },
+  returnHome: function () {
+    this.resetToStart();
+    this.setFade(0);
+  }
+});
+// Приборная панель: скорость и ускорение, схемы сопел, полоса возврата. Рисуется на холсте ~10 раз в секунду.
+AFRAME.registerComponent('hud', {
+  init: function () {
+    this.cv = document.createElement('canvas');
+    this.cv.width = 512; this.cv.height = 256;
+    this.ctx = this.cv.getContext('2d');
+    this.tex = new THREE.CanvasTexture(this.cv);
+    const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthTest: false, depthWrite: false });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.25), mat);
+    this.mesh.position.set(-0.3, -0.22, -0.7);
+    this.mesh.renderOrder = 999;
+    this.el.object3D.add(this.mesh);
+    this.acc = 0;
+  },
+  nearest: function (jf, t) {
+    const p = jf.el.object3D.position;
+    let best = { name: 'Комната', h: Infinity, vB: new THREE.Vector3() };
+    if (Math.hypot(p.x, p.z) <= CAP_A + 3) best.h = Math.max(p.y, 0);
+    for (let i = 0; i < BODIES.length; i++) {
+      const c = bodyPos(i, t);
+      const h = p.distanceTo(c) - BODIES[i].r;
+      if (h < best.h) {
+        const vB = c.clone().sub(bodyPos(i, t - 0.05)).multiplyScalar(20);
+        vB.add(new THREE.Vector3(0, BODIES[i].spin, 0).cross(p.clone().sub(c)));
+        best = { name: BODIES[i].name || '', h, vB };
+      }
+    }
+    return best;
+  },
+  flame: function (c, x, y, dx, dy, f) {
+    // Сопло-заглушка и пламя длиной по доле тяги
+    c.fillStyle = '#6b7385';
+    c.fillRect(x - 4 - Math.abs(dy) * 4, y - 4 - Math.abs(dx) * 4, 8 + Math.abs(dy) * 8, 8 + Math.abs(dx) * 8);
+    if (f < 0.03) return;
+    const L = 6 + 26 * f;
+    c.fillStyle = f > 0.7 ? '#ffd24a' : '#ff8a1e';
+    c.beginPath();
+    c.moveTo(x + dy * -5, y + dx * 5);
+    c.lineTo(x + dy * 5, y + dx * -5);
+    c.lineTo(x + dx * (4 + L), y + dy * (4 + L));
+    c.closePath(); c.fill();
+  },
+  tick: function (time) {
+    if (time - this.acc < 100) return;
+    this.acc = time;
+    const jf = document.querySelector('#player').components['jetpack-flight'];
+    if (!jf || !jf.vel) return;
+    const t = time / 1000;
+    const nb = this.nearest(jf, t);
+    const speed = jf.vel.distanceTo(nb.vB);
+    const room = jf.vel.length();
+    const c = this.ctx;
+    c.clearRect(0, 0, 512, 256);
+    c.fillStyle = 'rgba(4,10,20,0.55)';
+    c.fillRect(0, 0, 512, 256);
+    c.strokeStyle = '#18e0ff'; c.lineWidth = 3; c.strokeRect(2, 2, 508, 252);
+    c.fillStyle = '#18e0ff'; c.font = 'bold 20px sans-serif';
+    c.fillText('СКОРОСТЬ', 16, 34);
+    c.fillStyle = '#fff'; c.font = 'bold 54px sans-serif';
+    c.fillText(speed.toFixed(1), 16, 92);
+    c.font = '20px sans-serif'; c.fillStyle = '#9fb4c8';
+    c.fillText('м/с отн. ' + nb.name, 16, 118);
+    c.fillStyle = '#18e0ff'; c.font = 'bold 20px sans-serif';
+    c.fillText('УСКОРЕНИЕ', 16, 156);
+    c.fillStyle = '#fff'; c.font = 'bold 40px sans-serif';
+    c.fillText((jf.accelMag || 0).toFixed(1), 16, 198);
+    c.font = '20px sans-serif'; c.fillStyle = '#9fb4c8';
+    c.fillText('м/с²', 110, 198);
+    // Схемы сопел: вид сзади (вверх, вниз, вправо, влево) и вид сбоку (вперёд, назад).
+    // Пламя вылетает в сторону, противоположную тяге.
+    const th = jf.thr || [0, 0, 0, 0, 0, 0];
+    const fx = 340, fy = 100, sx = 450, sy = 100;
+    c.fillStyle = '#1b2433'; c.strokeStyle = '#18e0ff'; c.lineWidth = 2;
+    c.fillRect(fx - 22, fy - 22, 44, 44); c.strokeRect(fx - 22, fy - 22, 44, 44);
+    c.fillRect(sx - 28, sy - 16, 56, 32); c.strokeRect(sx - 28, sy - 16, 56, 32);
+    c.fillStyle = '#18e0ff'; c.fillRect(sx + 28, sy - 6, 8, 12); // нос
+    this.flame(c, fx, fy + 22, 0, 1, th[0]);   // тяга вверх – пламя снизу
+    this.flame(c, fx, fy - 22, 0, -1, th[1]);  // тяга вниз – пламя сверху
+    this.flame(c, fx - 22, fy, -1, 0, th[2]);  // тяга вправо – пламя слева
+    this.flame(c, fx + 22, fy, 1, 0, th[3]);   // тяга влево – пламя справа
+    this.flame(c, sx - 28, sy, -1, 0, th[4]);  // тяга вперёд – пламя сзади
+    this.flame(c, sx + 28, sy, 1, 0, th[5]);   // тяга назад – пламя спереди (у носа)
+    c.fillStyle = '#9fb4c8'; c.font = '14px sans-serif';
+    c.fillText('сзади', fx - 18, 160); c.fillText('сбоку', sx - 18, 160);
+    // Возврат
+    const hold = jf.retHold || 0;
+    c.fillStyle = '#9fb4c8'; c.font = '16px sans-serif';
+    c.fillText(hold > 0 ? 'ВОЗВРАТ...' : 'Возврат: держать R / Y', 290, 214);
+    c.strokeStyle = '#18e0ff'; c.lineWidth = 2; c.strokeRect(290, 224, 206, 16);
+    c.fillStyle = '#ff8a1e'; c.fillRect(292, 226, 202 * hold / RETURN_HOLD, 12);
+    this.tex.needsUpdate = true;
   }
 });
 document.querySelector('#player').setAttribute('jetpack-flight', '');
