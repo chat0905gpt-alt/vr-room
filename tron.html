@@ -127,10 +127,30 @@ AFRAME.registerComponent('void-sky', {
     grad.addColorStop(0.50, '#4a4c52'); grad.addColorStop(0.56, '#2a2b30'); grad.addColorStop(1.00, '#1c1d22');
     g.fillStyle = grad; g.fillRect(0, 0, 8, 256);
     const skyTex = new THREE.CanvasTexture(c); skyTex.colorSpace = THREE.SRGBColorSpace;
+    // Дальний купол (радиус 1500 м) едет за игроком, поэтому всегда выглядит как небо вокруг, а не как шар
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(95, 24, 16),
+      new THREE.SphereGeometry(1500, 32, 24),
       new THREE.MeshBasicMaterial({map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false}));
+    mesh.renderOrder = -2; // сначала купол, потом звёзды, потом всё остальное
     this.el.setObject3D('mesh', mesh);
+    // Звёзды: 1500 точек на сфере чуть ближе купола, разной яркости, с лёгким тёплым и холодным оттенком
+    const N = 1500, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+      pos[i * 3] = 1400 * s * Math.cos(a); pos[i * 3 + 1] = 1400 * u; pos[i * 3 + 2] = 1400 * s * Math.sin(a);
+      const v = 0.35 + 0.65 * Math.pow(Math.random(), 2), w = Math.random();
+      col[i * 3] = v * (w < 0.3 ? 1.0 : 0.85); col[i * 3 + 1] = v * 0.9; col[i * 3 + 2] = v * (w > 0.7 ? 1.0 : 0.85);
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const stars = new THREE.Points(sg, new THREE.PointsMaterial({ size: 2.5, sizeAttenuation: false, vertexColors: true, fog: false, depthWrite: false }));
+    stars.frustumCulled = false; stars.renderOrder = -1;
+    this.el.setObject3D('stars', stars);
+    this.player = document.querySelector('#player');
+  },
+  tick: function () {
+    if (this.player) this.el.object3D.position.copy(this.player.object3D.position);
   }
 });
 
