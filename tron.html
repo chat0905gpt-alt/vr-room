@@ -370,6 +370,8 @@ AFRAME.registerComponent('snap-turn', {
 // Тяга: основные сопла (вверх и вперёд) сильнее, боковые/задние/нижние слабее.
 const THRUST_MAIN = 11, THRUST_SIDE = 6, CRASH_SPEED = 12, STICK_SPEED = 3, RESTITUTION = 0.4, RETURN_HOLD = 2;
 const START = { x: 0, y: 0.9, z: 3.2 };
+// Ранец героя слабее корабля: вверх 8 (чтобы можно было прыгать при гравитации 6.5), вперёд 5.5, остальные 3
+const HERO_UP = 8, HERO_MAIN = 5.5, HERO_SIDE = 3;
 // Половины размеров тела: квадрат 0.5 × 0.5 м в основании и 1.8 м в высоту
 const BOX = { x: 0.25, y: 0.9, z: 0.25 };
 // Большая планета: целый шар радиусом 120 м. Верх шара на PED метров ниже пола комнаты, а пол – диск радиусом 40 м
@@ -558,6 +560,22 @@ AFRAME.registerComponent('pedestal', {
   }
 });
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+// Кнопки Quest: в WebXR контроллеры не попадают в navigator.getGamepads(), поэтому читаем геймпад из компонента контроллера
+// и дублируем событиями A-Frame (abuttondown, ybuttondown, gripdown).
+function readPads(jf) {
+  const o = { tr: null, tl: null, roll: !!jf.pad.roll, A: !!jf.pad.A, Y: !!jf.pad.Y };
+  const g = el => { const c = el && (el.components['tracked-controls'] || el.components['tracked-controls-webxr']); return c && c.controller && c.controller.gamepad; };
+  const R = g(jf.rightEl), L = g(jf.leftEl);
+  if (R && R.buttons) { if (R.buttons[0]) o.tr = R.buttons[0].value; if (R.buttons[4] && R.buttons[4].pressed) o.A = true; }
+  if (L && L.buttons) { if (L.buttons[0]) o.tl = L.buttons[0].value; if (L.buttons[1] && L.buttons[1].pressed) o.roll = true; if (L.buttons[5] && L.buttons[5].pressed) o.Y = true; }
+  if (navigator.getGamepads) for (const gp of navigator.getGamepads()) {
+    if (!gp) continue;
+    if (gp.hand === 'right' && gp.buttons[4] && gp.buttons[4].pressed) o.A = true;
+    if (gp.hand === 'left' && gp.buttons[5] && gp.buttons[5].pressed) o.Y = true;
+  }
+  jf.padShown = o;
+  return o;
+}
 AFRAME.registerComponent('jetpack-flight', {
   init: function () {
     this.vel = new THREE.Vector3();
@@ -578,6 +596,13 @@ AFRAME.registerComponent('jetpack-flight', {
     hand.addEventListener('triggerdown', () => { this.thrusting = true; });
     hand.addEventListener('triggerup', () => { this.thrusting = false; });
     hand.addEventListener('thumbstickmoved', e => { this.rx = e.detail.x; this.ry = e.detail.y; });
+    this.rightEl = hand; this.leftEl = left; this.pad = {};
+    hand.addEventListener('abuttondown', () => { this.pad.A = true; });
+    hand.addEventListener('abuttonup', () => { this.pad.A = false; });
+    left.addEventListener('ybuttondown', () => { this.pad.Y = true; });
+    left.addEventListener('ybuttonup', () => { this.pad.Y = false; });
+    left.addEventListener('gripdown', () => { this.pad.roll = true; });
+    left.addEventListener('gripup', () => { this.pad.roll = false; });
     left.addEventListener('triggerdown', () => { this.lift = true; });
     left.addEventListener('triggerup', () => { this.lift = false; });
     left.addEventListener('thumbstickmoved', e => { this.lx = e.detail.x; this.ly = e.detail.y; });
@@ -605,15 +630,11 @@ AFRAME.registerComponent('jetpack-flight', {
     let tr = this.lift ? 0 : 0;
     tr = this.thrusting ? 1 : 0;
     let tl = this.lift ? 1 : 0, roll = false;
-    if (vr && navigator.getGamepads) {
-      for (const gp of navigator.getGamepads()) {
-        if (!gp) continue;
-        if (gp.hand === 'right' && gp.buttons[0]) tr = gp.buttons[0].value;
-        if (gp.hand === 'left') {
-          if (gp.buttons[0]) tl = gp.buttons[0].value;
-          if (gp.buttons[1]) roll = gp.buttons[1].pressed;
-        }
-      }
+    const pads = readPads(this);
+    if (vr) {
+      if (pads.tr !== null) tr = Math.max(tr, pads.tr);
+      if (pads.tl !== null) tl = Math.max(tl, pads.tl);
+      roll = pads.roll;
     }
     if (vr) {
       const maxRate = 1.5;
@@ -649,7 +670,7 @@ AFRAME.registerComponent('jetpack-flight', {
     const fwdV = new THREE.Vector3(0, 0, -1).applyQuaternion(aim);
     const rightV = new THREE.Vector3(1, 0, 0).applyQuaternion(aim);
     const upV = new THREE.Vector3(0, 1, 0).applyQuaternion(aim);
-    const THM = THRUST_MAIN * dt, THS = THRUST_SIDE * dt;
+    const THU = HERO_UP * dt, THM = HERO_MAIN * dt, THS = HERO_SIDE * dt;
     // Доли тяги по соплам для индикатора: [вверх, вниз, вправо, влево, вперёд, назад] (0..1)
     const thr = this.thr || (this.thr = [0, 0, 0, 0, 0, 0]);
     thr.fill(0);
@@ -673,11 +694,11 @@ AFRAME.registerComponent('jetpack-flight', {
         if (K.KeyD) { this.vel.addScaledVector(rightV, THS); thr[2] = 1; }
         if (K.KeyA) { this.vel.addScaledVector(rightV, -THS); thr[3] = 1; }
       }
-      if (K.Space) { this.vel.addScaledVector(upV, THM); this.grounded = false; thr[0] = 1; }
+      if (K.Space) { this.vel.addScaledVector(upV, THU); this.grounded = false; thr[0] = 1; }
       if (K.ShiftLeft || K.ShiftRight) { this.vel.addScaledVector(upV, -THS); this.grounded = false; thr[1] = 1; }
     }
     if (vr) {
-      if (tr > 0.05) { this.vel.addScaledVector(upV, tr * THM); this.grounded = false; thr[0] = tr; }
+      if (tr > 0.05) { this.vel.addScaledVector(upV, tr * THU); this.grounded = false; thr[0] = tr; }
       if (tl > 0.05) { this.vel.addScaledVector(upV, -tl * THS); this.grounded = false; thr[1] = tl; }
       if (!this.grounded && (dz(this.lx) || dz(this.ly))) {
         const sx = dz(this.lx), sy = -dz(this.ly);
@@ -689,9 +710,7 @@ AFRAME.registerComponent('jetpack-flight', {
     }
     // Пульт возврата: удерживать RETURN_HOLD секунд (ПК – R, VR – левая кнопка Y)
     let retBtn = !!(this.keys && this.keys.KeyR);
-    if (vr && navigator.getGamepads) {
-      for (const gp of navigator.getGamepads()) if (gp && gp.hand === 'left' && gp.buttons[5] && gp.buttons[5].pressed) retBtn = true;
-    }
+    if (vr && pads.Y) retBtn = true;
     this.retHold = retBtn ? Math.min(RETURN_HOLD, (this.retHold || 0) + dt) : Math.max(0, (this.retHold || 0) - dt * 2);
     if (this.retHold >= RETURN_HOLD) { this.returnHome(); return; }
     if (this.retHold > 0 || this.fadeOn) {
@@ -831,12 +850,12 @@ AFRAME.registerComponent('jetpack-flight', {
 AFRAME.registerComponent('hud', {
   init: function () {
     this.cv = document.createElement('canvas');
-    this.cv.width = 512; this.cv.height = 256;
+    this.cv.width = 512; this.cv.height = 210;
     this.ctx = this.cv.getContext('2d');
     this.tex = new THREE.CanvasTexture(this.cv);
     const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthTest: false, depthWrite: false });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.25), mat);
-    this.mesh.position.set(-0.3, -0.22, -0.7);
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55 * 210 / 512), mat);
+    this.mesh.position.set(-0.36, -0.28, -1.5);
     this.mesh.renderOrder = 999;
     this.el.object3D.add(this.mesh);
     this.acc = 0;
@@ -879,10 +898,10 @@ AFRAME.registerComponent('hud', {
     const speed = jf.vel.distanceTo(nb.vB);
     const room = jf.vel.length();
     const c = this.ctx;
-    c.clearRect(0, 0, 512, 256);
+    c.clearRect(0, 0, 512, 210);
     c.fillStyle = 'rgba(4,10,20,0.55)';
-    c.fillRect(0, 0, 512, 256);
-    c.strokeStyle = '#18e0ff'; c.lineWidth = 3; c.strokeRect(2, 2, 508, 252);
+    c.fillRect(0, 0, 512, 210);
+    c.strokeStyle = '#18e0ff'; c.lineWidth = 1.5; c.strokeRect(1, 1, 510, 208);
     c.fillStyle = '#18e0ff'; c.font = 'bold 20px sans-serif';
     c.fillText('СКОРОСТЬ', 16, 34);
     c.fillStyle = '#fff'; c.font = 'bold 54px sans-serif';
@@ -898,8 +917,8 @@ AFRAME.registerComponent('hud', {
     // Схемы сопел: вид сзади (вверх, вниз, вправо, влево) и вид сбоку (вперёд, назад).
     // Пламя вылетает в сторону, противоположную тяге.
     const th = jf.thr || [0, 0, 0, 0, 0, 0];
-    const fx = 340, fy = 100, sx = 450, sy = 100;
-    c.fillStyle = '#1b2433'; c.strokeStyle = '#18e0ff'; c.lineWidth = 2;
+    const fx = 330, fy = 95, sx = 440, sy = 95;
+    c.fillStyle = '#1b2433'; c.strokeStyle = '#18e0ff'; c.lineWidth = 1;
     c.fillRect(fx - 22, fy - 22, 44, 44); c.strokeRect(fx - 22, fy - 22, 44, 44);
     c.fillRect(sx - 28, sy - 16, 56, 32); c.strokeRect(sx - 28, sy - 16, 56, 32);
     c.fillStyle = '#18e0ff'; c.fillRect(sx + 28, sy - 6, 8, 12); // нос
@@ -909,14 +928,14 @@ AFRAME.registerComponent('hud', {
     this.flame(c, fx + 22, fy, 1, 0, th[3]);   // тяга влево – пламя справа
     this.flame(c, sx - 28, sy, -1, 0, th[4]);  // тяга вперёд – пламя сзади
     this.flame(c, sx + 28, sy, 1, 0, th[5]);   // тяга назад – пламя спереди (у носа)
-    c.fillStyle = '#9fb4c8'; c.font = '14px sans-serif';
-    c.fillText('сзади', fx - 18, 160); c.fillText('сбоку', sx - 18, 160);
-    // Возврат
+    // Возврат: короткая подпись и состояние кнопок для проверки (A – сесть, Y – возврат), светятся только нажатые
     const hold = jf.retHold || 0;
-    c.fillStyle = '#9fb4c8'; c.font = '16px sans-serif';
-    c.fillText(hold > 0 ? 'ВОЗВРАТ...' : 'Возврат: держать R / Y', 290, 214);
-    c.strokeStyle = '#18e0ff'; c.lineWidth = 2; c.strokeRect(290, 224, 206, 16);
-    c.fillStyle = '#ff8a1e'; c.fillRect(292, 226, 202 * hold / RETURN_HOLD, 12);
+    c.fillStyle = hold > 0 ? '#ff8a1e' : '#6f8296'; c.font = '16px sans-serif';
+    c.fillText(hold > 0 ? 'ВОЗВРАТ ' + (RETURN_HOLD - hold).toFixed(1) + ' с' : 'Возврат: держать 2 с (Y / R)', 250, 190);
+    const ps = jf.padShown || {};
+    c.font = 'bold 16px sans-serif';
+    c.fillStyle = ps.A ? '#18e0ff' : '#2a3544'; c.fillText('A', 470, 30);
+    c.fillStyle = ps.Y ? '#18e0ff' : '#2a3544'; c.fillText('Y', 490, 30);
     this.tex.needsUpdate = true;
   }
 });
@@ -1001,6 +1020,13 @@ AFRAME.registerComponent('ship', {
     this.group = buildShipModel();
     this.el.setObject3D('mesh', this.group);
     this.cache = [];
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
+    const cx = cv.getContext('2d'); cx.fillStyle = 'rgba(4,10,20,0.6)'; cx.fillRect(0, 0, 256, 64);
+    cx.strokeStyle = '#18e0ff'; cx.lineWidth = 2; cx.strokeRect(1, 1, 254, 62);
+    cx.fillStyle = '#fff'; cx.font = 'bold 28px sans-serif'; cx.textAlign = 'center'; cx.fillText('A / E – сесть', 128, 42);
+    this.hint = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true }));
+    this.hint.scale.set(1.6, 0.4, 1); this.hint.renderOrder = 998; this.hint.visible = false;
+    this.el.sceneEl.object3D.add(this.hint);
   },
   // Кэш положений и скоростей тел на этот кадр
   prepare: function (t) {
@@ -1137,7 +1163,8 @@ AFRAME.registerComponent('ship', {
     const vr = this.el.sceneEl.is('vr-mode'), K = jf.keys || {};
     // Вход и выход: ПК – E, VR – правая кнопка A
     let eBtn = !!K.KeyE;
-    if (vr && navigator.getGamepads) for (const gp of navigator.getGamepads()) if (gp && gp.hand === 'right' && gp.buttons[4] && gp.buttons[4].pressed) eBtn = true;
+    const pads = readPads(jf);
+    if (vr && pads.A) eBtn = true;
     if (eBtn && !this.prevE) {
       if (this.piloting) this.exit(jf);
       else if (jf.el.object3D.position.distanceTo(this.pos) < 3.6) this.enter(jf);
@@ -1153,10 +1180,10 @@ AFRAME.registerComponent('ship', {
       const THM = THRUST_MAIN, THS = THRUST_SIDE;
       let tr = jf.thrusting ? 1 : 0, tl = jf.lift ? 1 : 0, roll = false;
       let lx = jf.lx, ly = jf.ly, rx = jf.rx, ry = jf.ry, retBtn = !!K.KeyR;
-      if (vr && navigator.getGamepads) for (const gp of navigator.getGamepads()) {
-        if (!gp) continue;
-        if (gp.hand === 'right' && gp.buttons[0]) tr = gp.buttons[0].value;
-        if (gp.hand === 'left') { if (gp.buttons[0]) tl = gp.buttons[0].value; if (gp.buttons[1]) roll = gp.buttons[1].pressed; if (gp.buttons[5] && gp.buttons[5].pressed) retBtn = true; }
+      if (vr) {
+        if (pads.tr !== null) tr = Math.max(tr, pads.tr);
+        if (pads.tl !== null) tl = Math.max(tl, pads.tl);
+        roll = pads.roll; if (pads.Y) retBtn = true;
       }
       const loc = new THREE.Vector3();   // тяга в осях корпуса
       if (!vr) {
@@ -1202,6 +1229,10 @@ AFRAME.registerComponent('ship', {
       } else this.reset();
     }
 
+    // Подсказка о посадке: когда герой рядом
+    const near = !this.piloting && jf.el.object3D.position.distanceTo(this.pos) < 6;
+    this.hint.visible = near;
+    if (near) this.hint.position.copy(this.pos).addScaledVector(WORLD_UP, 2.4);
     // Показываем корабль
     this.group.quaternion.copy(this.q);
     this.group.position.copy(this.pos).sub(SHIP_COM.clone().applyQuaternion(this.q));
